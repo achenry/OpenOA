@@ -194,13 +194,17 @@ def impute_all_assets_by_correlation(
                 impute_df.loc[ix_target, [impute_col]] = sub_df
     else:
         for target_id in corr_df.columns:
-            ix_target, sub_df = impute_target_id(data=data,
+            res = impute_target_id(data=data,
                                                 corr_df=corr_df,
                                                 sort_df=sort_df,
                                                 r2_threshold=r2_threshold,
                                                 asset_id_col=asset_id_col,
                                                 impute_df=impute_df, impute_col=impute_col, reference_col=reference_col,
                                                 target_id=target_id, method=method, degree=degree)
+            if res is None:
+                continue
+            
+            ix_target, sub_df = res
             impute_df.loc[ix_target, [impute_col]] = sub_df
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
