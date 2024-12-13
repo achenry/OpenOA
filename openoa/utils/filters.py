@@ -96,7 +96,8 @@ def unresponsive_flag(
 
     # Get boolean value of the difference in successive time steps is not equal to zero, and take the
     # rolling sum of the boolean diff column in period lengths defined by threshold
-    subset = data.loc[:, col].copy()
+    # subset = data.loc[:, col].copy()
+    subset = data.loc[:, col]
     flag = subset.diff(axis=0).ne(0).rolling(threshold - 1).sum()
 
     # Create boolean series that is True if rolling sum is zero
@@ -145,7 +146,8 @@ def std_range_flag(
     if len(col) != len(threshold):
         raise ValueError("The inputs to `col` and `threshold` must be the same length.")
 
-    subset = data.loc[:, col].copy()
+    # subset = data.loc[:, col].copy()
+    subset = data.loc[:, col]
     data_mean = np.nanmean(subset.values, axis=0)
     data_std = np.nanstd(subset.values, ddof=1, axis=0) * np.array(threshold)
     flag = subset.le(data_mean - data_std) | subset.ge(data_mean + data_std)

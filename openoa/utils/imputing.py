@@ -3,25 +3,18 @@ This module provides methods for filling in null data with interpolated (imputed
 """
 
 from copy import deepcopy
-
-import numpy as np
-import pandas as pd
-from tqdm import tqdm
-from numpy.polynomial import Polynomial
-
-"""
-This module provides methods for filling in null data with interpolated (imputed) values.
-"""
-
-from copy import deepcopy
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+import polars as pl
+import polars.selectors as cs
 from numpy.polynomial import Polynomial
 from mpi4py import MPI
 from mpi4py.futures import MPICommExecutor
+import numexpr as ne
+
+ne.set_num_threads(ne.detect_number_of_cores())
 
 def impute_data(
     target_col: str,
@@ -123,7 +116,8 @@ def impute_data(
     return data.loc[:, target_col].rename(final_col_name)
 
 def impute_all_assets_by_correlation(
-    data: pd.DataFrame,
+    data_pd: pd.DataFrame | None,
+    data_pl: pl.LazyFrame | None,
     impute_col: str,
     reference_col: str,
     asset_id_col: str = "asset_id",
@@ -162,14 +156,33 @@ def impute_all_assets_by_correlation(
         :obj:`pandas.Series`: The imputation results
 
     """
-    impute_df = data.loc[:, :].copy()
 
-    # Create correlation matrix between different assets
-    corr_df = asset_correlation_matrix(data, impute_col)
+    if (data_pd is None and data_pl is None) or (data_pd is not None and data_pl is not None):
+        raise Exception("Must provide either a pandas DataFrame or a polars LazyFrame, but not both")
 
-    # Sort the correlated values according to the highest value, with nans at the end.
-    ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
-    sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=corr_df.index)
+    if data_pd is not None:
+        # impute_df = data_pd.loc[:, :].copy()
+
+        # Create correlation matrix between different assets
+        corr_df = asset_correlation_matrix_pd(data_pd, impute_col)
+
+        # Sort the correlated values according to the highest value, with nans at the end.
+        ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
+        sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=corr_df.index)
+        data = data_pd
+        impute_func = impute_target_id_pd
+    elif data_pl is not None:
+        # impute_df = None
+
+        # Create correlation matrix between different assets
+        corr_df = asset_correlation_matrix_pl(data_pl, impute_col)
+
+        # Sort the correlated values according to the highest value, with nans at the end.
+        ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
+        sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=corr_df.columns)
+        data = data_pl
+        impute_func = impute_target_id_pl
+
     # Loop over the assets and impute missing data
     if multiprocessor is not None:
         if multiprocessor == "mpi":
@@ -178,40 +191,104 @@ def impute_all_assets_by_correlation(
             max_workers = multiprocessing.cpu_count()
             executor = ProcessPoolExecutor(max_workers=max_workers)
         with executor as ex:
-            futures = [ex.submit(impute_target_id, 
-                                        data=data,
-                                        corr_df=corr_df,
-                                        sort_df=sort_df,
-                                        r2_threshold=r2_threshold,
-                                        asset_id_col=asset_id_col,
-                                        impute_df=impute_df, impute_col=impute_col, reference_col=reference_col,
-                                        target_id=target_id, method=method, degree=degree) for target_id in corr_df.columns]
-            for fut in futures:
-                res = fut.result()
-                if res is None:
-                    continue
-                ix_target, sub_df = res
-                impute_df.loc[ix_target, [impute_col]] = sub_df
+            if ex is not None:
+                futures = {"target_id": ex.submit(impute_func, 
+                                            data=data,
+                                            corr_df=corr_df,
+                                            sort_df=sort_df,
+                                            r2_threshold=r2_threshold,
+                                            asset_id_col=asset_id_col,
+                                            impute_df=data, impute_col=impute_col, reference_col=reference_col,
+                                            target_id=target_id, method=method, degree=degree) 
+                                            for target_id in corr_df.columns}
+                
+                for k, fut in futures.items():
+                    res = fut.result()
+                    if res is None:
+                        continue
+                    _, sub_df = res
+                    # sub_df = pl.concat([sub_df.with_columns(pl.lit(target_id).alias(asset_id_col)),data.filter(ix_target).select("time")], how="horizontal").collect().lazy()
+                    # data = data.join(sub_df, on="time", coalesce=True).collect(streaming=True).lazy()
+                    data = data.update(sub_df.rename({impute_col: f"{impute_col}_{k}"}), on="time")
+                    # data.loc[ix_target, [impute_col]] = sub_df
     else:
         for target_id in corr_df.columns:
-            res = impute_target_id(data=data,
+            
+            res = impute_func(data=data,
                                                 corr_df=corr_df,
                                                 sort_df=sort_df,
                                                 r2_threshold=r2_threshold,
                                                 asset_id_col=asset_id_col,
-                                                impute_df=impute_df, impute_col=impute_col, reference_col=reference_col,
+                                                impute_df=data, impute_col=impute_col, reference_col=reference_col,
                                                 target_id=target_id, method=method, degree=degree)
             if res is None:
                 continue
             
-            ix_target, sub_df = res
-            impute_df.loc[ix_target, [impute_col]] = sub_df
+            _, sub_df = res
+            # sub_df = pl.concat([sub_df.with_columns(pl.lit(target_id).alias(asset_id_col)), 
+            #                     data.filter(ix_target).select("time")], how="horizontal").collect().lazy()
+            # .with_columns({feature: imputed_vals}).fill_nan(None)
+            data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
+            # data = data.with_columns(pl.when(ix_target).then(sub_df.collect()).otherwise(pl.col(impute_col)).alias(impute_col))
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})
-    return impute_df[impute_col].rename(f"imputed_{impute_col}")
+    return data
 
-def impute_target_id(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
+def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
+    print(f"Imputing feature {impute_col} for asset {target_id}")
+    # If there are no NaN values, then skip the asset altogether, otherwise
+    # keep track of the number we need to continue checking for
+    ix_target = cs.ends_with(target_id).alias(impute_col)
+    target_df = data.select("time", cs.ends_with(target_id).alias(impute_col)).collect().lazy()
+    sub_df = target_df.clone()
+
+    ix_nan = sub_df.select(pl.col(impute_col).is_null()).collect()
+    any_nans = ix_nan.select(pl.col(impute_col).any()).item()
+    if not any_nans:
+        return
+
+    # Get the correlation-based neareast neighbor and data
+    id_sort_neighbor = 0
+    id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
+    r2_neighbor = corr_df.loc[target_id, id_neighbor]
+
+    # If the R2 value is too low, then move on to the next asset
+    if r2_neighbor <= r2_threshold:
+        return
+
+    num_neighbors = corr_df.shape[0] - 1
+    while (any_nans) & (num_neighbors > 0) & (r2_neighbor > r2_threshold):
+        # Get the imputed data based on the correlation-based next nearest neighbor
+        try:
+            imputed_data = impute_data(
+                # target_data=data.xs(target_id, level=1).loc[:, [impute_col]],
+                target_data=target_df.select(impute_col).collect().to_pandas(),
+                target_col=impute_col,
+                # reference_data=data.xs(id_neighbor, level=1).loc[:, [reference_col]],
+                reference_data=target_df.select(reference_col).collect().to_pandas(),
+                reference_col=reference_col,
+                method=method,
+                degree=degree,
+            )
+        except ValueError as e:
+            print(f"ValueError was raised while trying to impute {target_id}: {e}")
+            break
+
+        # Fill any NaN values with available imputed values
+        sub_df = sub_df.with_columns(pl.when(ix_nan).then(imputed_data.values).otherwise(pl.col(impute_col)).alias(impute_col))
+
+        ix_nan = sub_df.select(pl.col(impute_col).is_null()).collect()
+        any_nans = ix_nan.select(pl.col(impute_col).any()).item()
+
+        num_neighbors -= 1
+        id_sort_neighbor += 1
+        id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
+        r2_neighbor = corr_df.loc[target_id, id_neighbor]
+
+    return ix_target, sub_df
+
+def impute_target_id_pd(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
     print(f"Imputing feature {impute_col} for asset {target_id}")
     # If there are no NaN values, then skip the asset altogether, otherwise
     # keep track of the number we need to continue checking for
@@ -264,8 +341,27 @@ def impute_target_id(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_
 
     return ix_target, sub_df 
 
+def asset_correlation_matrix_pl(data: pl.LazyFrame, value_col: str) -> pd.DataFrame:
+    """Create a correlation matrix on a MultiIndex `DataFrame` with time (or a different
+    alignment value) and asset_id values as its indices, respectively.
 
-def asset_correlation_matrix(data: pd.DataFrame, value_col: str) -> pd.DataFrame:
+    Args:
+        data(:obj:`pandas.DataFrame`): input data frame such as :py:attr:`PlantData.scada` that uses a
+            MultiIndex with a timestamp and asset_id column for indices, in that order.
+        value_col(:obj:`str`): the column containing the data values to be used when
+            assessing correlation
+
+    Returns:
+        :obj:`pandas.DataFrame`: Correlation matrix with <id_col> as index and column names
+    """
+
+    # corr_df = data.collect().pivot(on="turbine_id", index="time", values=value_col, sort_columns=True)\
+    #                         .drop("time").to_pandas().corr()
+    corr_df = data.select(cs.starts_with(value_col)).rename(lambda col: col.split("_")[-1]).collect().to_pandas().corr()
+    np.fill_diagonal(corr_df.values, np.nan)
+    return corr_df
+
+def asset_correlation_matrix_pd(data: pd.DataFrame, value_col: str) -> pd.DataFrame:
     """Create a correlation matrix on a MultiIndex `DataFrame` with time (or a different
     alignment value) and asset_id values as its indices, respectively.
 
@@ -327,7 +423,7 @@ def impute_all_assets_by_correlation_sequential(
     impute_df = data.loc[:, :].copy()
 
     # Create correlation matrix between different assets
-    corr_df = asset_correlation_matrix(data, impute_col)
+    corr_df = asset_correlation_matrix_pd(data, impute_col)
 
     # Sort the correlated values according to the highest value, with nans at the end.
     ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
