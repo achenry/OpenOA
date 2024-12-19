@@ -6,6 +6,7 @@ intended for application in wind plant operational energy analysis, particularly
 from __future__ import annotations
 
 import numpy as np
+import polars as pl
 import scipy as sp
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -65,7 +66,8 @@ def range_flag(
 
 
 def unresponsive_flag(
-    data: pd.DataFrame | pd.Series,
+    data_pd: pd.DataFrame | pd.Series | None = None,
+    data_pl : pl.LazyFrame | None = None,
     threshold: int = 3,
     col: list[str] | None = None,
 ) -> pd.Series | pd.DataFrame:
@@ -87,31 +89,62 @@ def unresponsive_flag(
             boolean entries.
     """
     # Prepare the inputs to be standardized for use with DataFrames
-    if to_series := isinstance(data, pd.Series):
-        data, col = series_to_df(data)
-    if col is None:
-        col = data.columns.tolist()
-    if not isinstance(threshold, int):
-        raise TypeError("The input to `threshold` must be an integer.")
+    if data_pd is not None:
+        data = data_pd
+        if to_series := isinstance(data, pd.Series):
+            data, col = series_to_df(data)
+        if col is None:
+            col = data.columns.tolist()
+        if not isinstance(threshold, int):
+            raise TypeError("The input to `threshold` must be an integer.")
 
-    # Get boolean value of the difference in successive time steps is not equal to zero, and take the
-    # rolling sum of the boolean diff column in period lengths defined by threshold
-    # subset = data.loc[:, col].copy()
-    subset = data.loc[:, col]
-    flag = subset.diff(axis=0).ne(0).rolling(threshold - 1).sum()
+        # Get boolean value of the difference in successive time steps is not equal to zero, and take the
+        # rolling sum of the boolean diff column in period lengths defined by threshold
+        # subset = data.loc[:, col].copy()
+        subset = data.loc[:, col]
+        flag = subset.diff(axis=0).ne(0).rolling(threshold - 1).sum()
 
-    # Create boolean series that is True if rolling sum is zero
-    flag = flag == 0
+        # Create boolean series that is True if rolling sum is zero
+        flag = flag == 0
 
-    # Need to flag preceding `threshold` values as well
-    flag = flag | np.any([flag.shift(-1 - i, axis=0) for i in range(threshold - 1)], axis=0)
+        # Need to flag preceding `threshold` values as well
+        flag = flag | np.any([flag.shift(-1 - i, axis=0) for i in range(threshold - 1)], axis=0)
 
-    # Return back a pd.Series if one was provided, else a pd.DataFrame
-    return flag[col[0]] if to_series else flag
+        # Return back a pd.Series if one was provided, else a pd.DataFrame
+        return flag[col[0]] if to_series else flag
+    elif data_pl is not None:
+        data = data_pl
+        # Get boolean value of the difference in successive time steps is not equal to zero, and take the
+        # rolling sum of the boolean diff column in period lengths defined by threshold
+        if col is None:
+            col = sorted(list(data.collect_schema().keys()))
+        
+        subset = data.select(col)
+        flag = subset.select(pl.all().diff().ne(0).fill_null(True)\
+                               .cast(pl.Int64).rolling_sum(window_size=threshold-1))
+        
+        # Create boolean series that is True if rolling sum is zero 
+        flag = flag.select(pl.all().eq(0)).fill_null(False)
 
+        # Need to flag preceding `threshold` values as well
+        # NOTE: original implementation (first line) labels all trailing values as unresponsive sensor values, just because they reduce to nan with shift operator and nan equates to True
+        # flag = flag.select([(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(True).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col])
+        flag = flag.select([(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(False).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col])
+        
+        # # debug
+        # flag2 = subset.collect().to_pandas().diff(axis=0).ne(0).rolling(threshold - 1).sum()
+        # flag2 = flag2 == 0
+        # flag2 = flag2 | np.any([flag2.shift(-1 - i, axis=0).fillna(False) for i in range(threshold - 1)], axis=0)
+        # flag = flag.collect().to_pandas()
+
+        # Return back a pd.Series if one was provided, else a pd.DataFrame
+        return flag.collect().to_pandas()
+    else:
+        raise TypeError("Either data_pl or data_pd must be passed.")
 
 def std_range_flag(
-    data: pd.DataFrame | pd.Series,
+    data_pd: pd.DataFrame | pd.Series | None = None,
+    data_pl: pl.LazyFrame | None = None,
     threshold: float | list[float] = 2.0,
     col: list[str] | None = None,
 ) -> pd.Series | pd.DataFrame:
@@ -136,24 +169,40 @@ def std_range_flag(
         :obj:`pandas.Series` | `pandas.DataFrame`: Series or DataFrame (depending on :py:attr:`data` type) with
             boolean entries.
     """
-    # Prepare the inputs to be standardized for use with DataFrames
-    if to_series := isinstance(data, pd.Series):
-        data, col = series_to_df(data)
-    if col is None:
-        col = data.columns.tolist()
+    if data_pd is not None:
+        data = data_pd
+        # Prepare the inputs to be standardized for use with DataFrames
+        if to_series := isinstance(data, pd.Series):
+            data, col = series_to_df(data)
+        if col is None:
+            col = data.columns.tolist()
 
-    threshold, *_ = convert_args_to_lists(len(col), threshold)
-    if len(col) != len(threshold):
-        raise ValueError("The inputs to `col` and `threshold` must be the same length.")
+        threshold, *_ = convert_args_to_lists(len(col), threshold)
+        if len(col) != len(threshold):
+            raise ValueError("The inputs to `col` and `threshold` must be the same length.")
 
-    # subset = data.loc[:, col].copy()
-    subset = data.loc[:, col]
-    data_mean = np.nanmean(subset.values, axis=0)
-    data_std = np.nanstd(subset.values, ddof=1, axis=0) * np.array(threshold)
-    flag = subset.le(data_mean - data_std) | subset.ge(data_mean + data_std)
+        # subset = data.loc[:, col].copy()
+        subset = data.loc[:, col]
+        data_mean = np.nanmean(subset.values, axis=0)
+        data_std = np.nanstd(subset.values, ddof=1, axis=0) * np.array(threshold)
+        flag = subset.le(data_mean - data_std) | subset.ge(data_mean + data_std)
 
-    # Return back a pd.Series if one was provided, else a pd.DataFrame
-    return flag[col[0]] if to_series else flag
+        # Return back a pd.Series if one was provided, else a pd.DataFrame
+        return flag[col[0]] if to_series else flag
+    elif data_pl is not None:
+        data = data_pl
+        if col is None:
+            col = sorted(list(data.collect_schema().keys()))
+         
+        subset = data.select(col)
+        data_mean = pl.all().mean()
+        data_std =  pl.all().std(ddof=1) * threshold
+        flag = subset.select(pl.all().le(data_mean - data_std) \
+                                        | pl.all().ge(data_mean + data_std))
+        
+        return flag.collect(streaming=True).to_pandas()
+    else:
+        raise TypeError("Either data_pl or data_pd must be passed.")
 
 
 @series_method(data_cols=["window_col", "value_col"])

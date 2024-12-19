@@ -207,29 +207,22 @@ def impute_all_assets_by_correlation(
                     if res is None:
                         continue
                     _, sub_df = res
-                    # sub_df = pl.concat([sub_df.with_columns(pl.lit(target_id).alias(asset_id_col)),data.filter(ix_target).select("time")], how="horizontal").collect().lazy()
-                    # data = data.join(sub_df, on="time", coalesce=True).collect(streaming=True).lazy()
                     data = data.update(sub_df.rename({impute_col: f"{impute_col}_{k}"}), on="time")
-                    # data.loc[ix_target, [impute_col]] = sub_df
     else:
         for target_id in corr_df.columns:
             
             res = impute_func(data=data,
-                                                corr_df=corr_df,
-                                                sort_df=sort_df,
-                                                r2_threshold=r2_threshold,
-                                                asset_id_col=asset_id_col,
-                                                impute_df=data, impute_col=impute_col, reference_col=reference_col,
-                                                target_id=target_id, method=method, degree=degree)
+                                corr_df=corr_df,
+                                sort_df=sort_df,
+                                r2_threshold=r2_threshold,
+                                asset_id_col=asset_id_col,
+                                impute_df=data, impute_col=impute_col, reference_col=reference_col,
+                                target_id=target_id, method=method, degree=degree)
             if res is None:
                 continue
             
             _, sub_df = res
-            # sub_df = pl.concat([sub_df.with_columns(pl.lit(target_id).alias(asset_id_col)), 
-            #                     data.filter(ix_target).select("time")], how="horizontal").collect().lazy()
-            # .with_columns({feature: imputed_vals}).fill_nan(None)
             data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
-            # data = data.with_columns(pl.when(ix_target).then(sub_df.collect()).otherwise(pl.col(impute_col)).alias(impute_col))
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})
