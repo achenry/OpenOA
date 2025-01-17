@@ -192,7 +192,7 @@ def impute_all_assets_by_correlation(
 
     # Loop over the assets and impute missing data
     if multiprocessor is not None:
-        if multiprocessor == "mpi":
+        if multiprocessor == "mpi" and mpi_exists:
             executor = MPICommExecutor(MPI.COMM_WORLD, root=0)
         else:  # "cf" case
             max_workers = multiprocessing.cpu_count()
