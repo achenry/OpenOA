@@ -10,8 +10,15 @@ import pandas as pd
 import polars as pl
 import polars.selectors as cs
 from numpy.polynomial import Polynomial
-from mpi4py import MPI
-from mpi4py.futures import MPICommExecutor
+
+mpi_exists = False
+try:
+    from mpi4py import MPI
+    from mpi4py.futures import MPICommExecutor
+    mpi_exists = True
+except:
+    print("No MPI available on system.")
+    
 import numexpr as ne
 
 ne.set_num_threads(ne.detect_number_of_cores())
