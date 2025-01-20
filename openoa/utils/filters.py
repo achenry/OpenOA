@@ -10,6 +10,7 @@ import polars as pl
 import scipy as sp
 import pandas as pd
 from sklearn.cluster import KMeans
+from memory_profiler import profile
 
 from openoa.utils._converters import (
     series_to_df,
@@ -64,7 +65,7 @@ def range_flag(
     # Return back a pd.Series if one was provided, else a pd.DataFrame
     return flag[col[0]] if to_series else flag
 
-
+# @profile
 def unresponsive_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
     data_pl : pl.LazyFrame | None = None,
@@ -113,23 +114,24 @@ def unresponsive_flag(
         # Return back a pd.Series if one was provided, else a pd.DataFrame
         return flag[col[0]] if to_series else flag
     elif data_pl is not None:
-        data = data_pl
+        flag = data_pl
         # Get boolean value of the difference in successive time steps is not equal to zero, and take the
         # rolling sum of the boolean diff column in period lengths defined by threshold
         if col is None:
-            col = sorted(list(data.collect_schema().keys()))
+            col = sorted(list(flag.collect_schema().keys()))
         
-        subset = data.select(col)
-        flag = subset.select(pl.all().diff().ne(0).fill_null(True)\
+        flag = flag.select(pl.col(col).diff().ne(0).fill_null(True)\
                                .cast(pl.Int64).rolling_sum(window_size=threshold-1))
         
         # Create boolean series that is True if rolling sum is zero 
-        flag = flag.select(pl.all().eq(0)).fill_null(False)
+        flag = flag.select(pl.all().eq(0).fill_null(False))
 
         # Need to flag preceding `threshold` values as well
         # NOTE: original implementation (first line) labels all trailing values as unresponsive sensor values, just because they reduce to nan with shift operator and nan equates to True
         # flag = flag.select([(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(True).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col])
-        flag = flag.select([(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(False).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col])
+        # flag = flag.select([(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(False).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col])
+        
+        flag_func = lambda c: flag.select((pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(False).alias(str(i)) for i in range(threshold - 1)])).alias(c)) 
         
         # # debug
         # flag2 = subset.collect().to_pandas().diff(axis=0).ne(0).rolling(threshold - 1).sum()
@@ -138,7 +140,13 @@ def unresponsive_flag(
         # flag = flag.collect().to_pandas()
 
         # Return back a pd.Series if one was provided, else a pd.DataFrame
-        return flag.collect().to_pandas()
+        # return flag.collect().to_pandas()
+        # expr = [pl.all().diff().ne(0).fill_null(True)\
+        #                .cast(pl.Int64).rolling_sum(window_size=threshold-1)\
+        #                .eq(0).fill_null(False),
+        #         [(pl.col(c) | pl.any_horizontal([pl.col(c).shift(-1 - i).fill_null(False).alias(str(i)) for i in range(threshold - 1)])).alias(c) for c in col]]
+        return flag_func
+        # return expr
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
