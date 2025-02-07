@@ -199,7 +199,7 @@ def impute_all_assets_by_correlation(
             executor = ProcessPoolExecutor(max_workers=max_workers)
         with executor as ex:
             if ex is not None:
-                futures = {"target_id": ex.submit(impute_func, 
+                futures = {target_id: ex.submit(impute_func, 
                                             data=data,
                                             corr_df=corr_df,
                                             sort_df=sort_df,
@@ -209,12 +209,12 @@ def impute_all_assets_by_correlation(
                                             target_id=target_id, method=method, degree=degree) 
                                             for target_id in corr_df.columns}
                 
-                for k, fut in futures.items():
+                for tid, fut in futures.items():
                     res = fut.result()
                     if res is None:
                         continue
                     _, sub_df = res
-                    data = data.update(sub_df.rename({impute_col: f"{impute_col}_{k}"}), on="time")
+                    data = data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")
     else:
         for target_id in corr_df.columns:
             
@@ -260,13 +260,14 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     num_neighbors = corr_df.shape[0] - 1
     while (any_nans) & (num_neighbors > 0) & (r2_neighbor > r2_threshold):
         # Get the imputed data based on the correlation-based next nearest neighbor
+        reference_df = data.select("time", cs.ends_with(id_neighbor).alias(impute_col)).collect().lazy()
         try:
             imputed_data = impute_data(
                 # target_data=data.xs(target_id, level=1).loc[:, [impute_col]],
                 target_data=target_df.select(impute_col).collect().to_pandas(),
                 target_col=impute_col,
                 # reference_data=data.xs(id_neighbor, level=1).loc[:, [reference_col]],
-                reference_data=target_df.select(reference_col).collect().to_pandas(),
+                reference_data=reference_df.select(reference_col).collect().to_pandas(),
                 reference_col=reference_col,
                 method=method,
                 degree=degree,
@@ -274,11 +275,12 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
         except ValueError as e:
             print(f"ValueError was raised while trying to impute {target_id}: {e}")
             break
-
-        # Fill any NaN values with available imputed values
+        
+        # Fill any NaN/None/Null values with available imputed values
         sub_df = sub_df.with_columns(pl.when(ix_nan).then(imputed_data.values).otherwise(pl.col(impute_col)).alias(impute_col))
 
-        ix_nan = sub_df.select(pl.col(impute_col).is_null()).collect()
+        # imputed_data contains nans instead of nulls
+        ix_nan = sub_df.select(pl.col(impute_col).is_nan()).collect()
         any_nans = ix_nan.select(pl.col(impute_col).any()).item()
 
         num_neighbors -= 1
@@ -286,7 +288,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
         id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
         r2_neighbor = corr_df.loc[target_id, id_neighbor]
 
-    return ix_target, sub_df
+    return ix_target, sub_df.fill_nan(None)
 
 def impute_target_id_pd(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
     print(f"Imputing feature {impute_col} for asset {target_id}")
