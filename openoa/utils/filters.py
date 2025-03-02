@@ -4,9 +4,10 @@ intended for application in wind plant operational energy analysis, particularly
 """
 
 from __future__ import annotations
-
+from typing import Literal
 import numpy as np
 import polars as pl
+import polars.selectors as cs
 import scipy as sp
 import pandas as pd
 from sklearn.cluster import KMeans
@@ -155,6 +156,9 @@ def std_range_flag(
     data_pl: pl.LazyFrame | None = None,
     threshold: float | list[float] = 2.0,
     col: list[str] | None = None,
+    over: str = Literal["time", "asset"],
+    feature_types: list[str] | None = None,
+    asset_coords: dict[str, tuple[float, float]] | None = None,
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -189,25 +193,48 @@ def std_range_flag(
         if len(col) != len(threshold):
             raise ValueError("The inputs to `col` and `threshold` must be the same length.")
 
-        # subset = data.loc[:, col].copy()
-        subset = data.loc[:, col]
-        data_mean = np.nanmean(subset.values, axis=0)
-        data_std = np.nanstd(subset.values, ddof=1, axis=0) * np.array(threshold)
-        flag = subset.le(data_mean - data_std) | subset.ge(data_mean + data_std)
-
+        if over == "time":
+            # subset = data.loc[:, col].copy()
+            subset = data.loc[:, col]
+            data_mean = np.nanmean(subset.values, axis=0)
+            data_std = np.nanstd(subset.values, ddof=1, axis=0) * np.array(threshold)
+            flag = subset.le(data_mean - data_std) | subset.ge(data_mean + data_std)
+        else:
+            # TODO 
+            pass
+        
         # Return back a pd.Series if one was provided, else a pd.DataFrame
         return flag[col[0]] if to_series else flag
     elif data_pl is not None:
         data = data_pl
         if col is None:
             col = sorted(list(data.collect_schema().keys()))
-         
-        subset = data.select(col)
-        data_mean = pl.all().mean()
-        data_std =  pl.all().std(ddof=1) * threshold
-        flag = subset.select(pl.all().le(data_mean - data_std) \
-                                        | pl.all().ge(data_mean + data_std))
         
+        if over == "time":
+            subset = data.select(col)
+            data_mean = pl.all().mean()
+            data_std =  pl.all().std(ddof=1) * threshold
+            flag = subset.select(pl.all().le(data_mean - data_std) \
+                                            | pl.all().ge(data_mean + data_std))
+        else:
+            flag = []
+            for feat_type in feature_types:
+                data_mean = pl.mean_horizontal(cs.starts_with(feat_type))
+                data_std = pl.concat_list([c for c in col if c.startswith(feat_type)]).list.std(ddof=1) * threshold
+                flag.append(data.select(cs.starts_with(feat_type)).select(pl.all().le(data_mean - data_std) \
+                                                | pl.all().ge(data_mean + data_std)))
+                
+                # y = data.select(cs.starts_with(feat_type)).collect().select(data_mean).to_numpy().flatten()
+                # y_m = data.select(cs.starts_with(feat_type)).collect().select(data_mean - data_std).to_numpy().flatten()
+                # y_p = data.select(cs.starts_with(feat_type)).collect().select(data_mean + data_std).to_numpy().flatten()
+                # x = data.select(f"{feat_type}_1").collect().to_numpy().flatten()
+                # y_p = y_p[138496:138554]
+                # y_m = y_m[138496:138554]
+                # y = y[138496:138554] # mean wind direction
+                # x = x[138496:138554] # deviated wind direction at turbine 1
+                
+            flag = pl.concat(flag, how="horizontal")
+            
         return flag.collect(streaming=True).to_pandas()
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
