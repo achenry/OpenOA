@@ -187,7 +187,7 @@ def impute_all_assets_by_correlation(
         # Sort the correlated values according to the highest value, with nans at the end.
         ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
         sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=corr_df.columns)
-        data = data_pl
+        data = data_pl #.collect().lazy()
         impute_func = impute_target_id_pl
 
     # Loop over the assets and impute missing data
@@ -239,8 +239,8 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     print(f"Imputing feature {impute_col} for asset {target_id}")
     # If there are no NaN values, then skip the asset altogether, otherwise
     # keep track of the number we need to continue checking for
-    ix_target = cs.ends_with(target_id).alias(impute_col)
-    target_df = data.select("time", cs.ends_with(target_id).alias(impute_col)).collect().lazy()
+    ix_target = cs.ends_with(f"_{target_id}").alias(impute_col)
+    target_df = data.select("time", ix_target).collect().lazy()
     sub_df = target_df.clone()
 
     ix_nan = sub_df.select(pl.col(impute_col).is_null()).collect()
@@ -252,7 +252,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     id_sort_neighbor = 0
     id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
     r2_neighbor = corr_df.loc[target_id, id_neighbor]
-
+    
     # If the R2 value is too low, then move on to the next asset
     if r2_neighbor <= r2_threshold:
         return
@@ -260,7 +260,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     num_neighbors = corr_df.shape[0] - 1
     while (any_nans) & (num_neighbors > 0) & (r2_neighbor > r2_threshold):
         # Get the imputed data based on the correlation-based next nearest neighbor
-        reference_df = data.select("time", cs.ends_with(id_neighbor).alias(impute_col)).collect().lazy()
+        reference_df = data.select("time", cs.ends_with(f"_{id_neighbor}").alias(impute_col)).collect().lazy()
         try:
             imputed_data = impute_data(
                 # target_data=data.xs(target_id, level=1).loc[:, [impute_col]],
@@ -278,11 +278,9 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
         
         # Fill any NaN/None/Null values with available imputed values
         sub_df = sub_df.with_columns(pl.when(ix_nan).then(imputed_data.values).otherwise(pl.col(impute_col)).alias(impute_col))
-
         # imputed_data contains nans instead of nulls
         ix_nan = sub_df.select(pl.col(impute_col).is_nan()).collect()
         any_nans = ix_nan.select(pl.col(impute_col).any()).item()
-
         num_neighbors -= 1
         id_sort_neighbor += 1
         id_neighbor = sort_df.loc[target_id, id_sort_neighbor]

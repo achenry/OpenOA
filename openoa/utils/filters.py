@@ -284,6 +284,7 @@ def bin_filter(
     threshold_type: str = "std",
     direction: str = "all",
     data: pd.DataFrame = None,
+    return_center: bool = False
 ):
     """Flag time stamps for which data in `value_col` when binned by data in `bin_col` into bins of
     width `bin_width` are outside the `threhsold` bin. The `center_type` of each bin can be either the
@@ -369,7 +370,11 @@ def bin_filter(
     # Get all instances where the value is True, and reset any values outside the bin limits
     flag = pd.Series(np.nanmax(flag_df, axis=1), index=flag_df.index, dtype="bool")
     flag.loc[(bin_col <= bin_min) | (bin_col > bin_max)] = False
-    return flag
+    
+    if return_center:
+        return flag, center
+    else:
+        return flag
 
 
 @dataframe_method(data_cols=["data_col1", "data_col2"])
