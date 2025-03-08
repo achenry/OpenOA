@@ -196,7 +196,8 @@ def impute_all_assets_by_correlation(
             executor = MPICommExecutor(MPI.COMM_WORLD, root=0)
         else:  # "cf" case
             max_workers = multiprocessing.cpu_count()
-            executor = ProcessPoolExecutor(max_workers=max_workers)
+            executor = ProcessPoolExecutor(max_workers=max_workers,
+                                               mp_context=multiprocessing.get_context("spawn"))
         with executor as ex:
             if ex is not None:
                 futures = {target_id: ex.submit(impute_func, 
