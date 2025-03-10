@@ -10,6 +10,7 @@ import pandas as pd
 import polars as pl
 import polars.selectors as cs
 from numpy.polynomial import Polynomial
+import re
 
 mpi_exists = False
 try:
@@ -358,7 +359,10 @@ def asset_correlation_matrix_pl(data: pl.LazyFrame, value_col: str) -> pd.DataFr
 
     # corr_df = data.collect().pivot(on="turbine_id", index="time", values=value_col, sort_columns=True)\
     #                         .drop("time").to_pandas().corr()
-    corr_df = data.select(cs.starts_with(value_col)).rename(lambda col: col.split("_")[-1]).collect().to_pandas().corr()
+    corr_df = data.select(cs.starts_with(value_col)).rename(
+        # lambda col: col.split("_")[-1]
+        lambda col: re.search(f"(?<={value_col}_)\w+$", col).group(0)
+        ).collect().to_pandas().corr()
     np.fill_diagonal(corr_df.values, np.nan)
     return corr_df
 

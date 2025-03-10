@@ -20,6 +20,8 @@ from openoa.utils._converters import (
     convert_args_to_lists,
 )
 
+from openoa.utils.imputing import asset_correlation_matrix_pl, asset_correlation_matrix_pd
+
 
 def range_flag(
     data: pd.DataFrame | pd.Series,
@@ -158,7 +160,8 @@ def std_range_flag(
     col: list[str] | None = None,
     over: str = Literal["time", "asset"],
     feature_types: list[str] | None = None,
-    asset_coords: dict[str, tuple[float, float]] | None = None,
+    r2_threshold: float | None = None,
+    min_correlated_assets: int = None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -209,7 +212,7 @@ def std_range_flag(
         data = data_pl
         if col is None:
             col = sorted(list(data.collect_schema().keys()))
-        
+            
         if over == "time":
             subset = data.select(col)
             data_mean = pl.all().mean()
@@ -217,25 +220,35 @@ def std_range_flag(
             flag = subset.select(pl.all().le(data_mean - data_std) \
                                             | pl.all().ge(data_mean + data_std))
         else:
+            # Create correlation matrix between different assets
+            corr_df = {feat_type: asset_correlation_matrix_pl(data_pl, feat_type) for feat_type in feature_types}
+            turbine_ids = corr_df[feature_types[0]].columns.to_numpy()
+            # Sort the correlated values according to the highest value, with nans at the end.
+            corr_df = {feat_type: corr_df[feat_type].fillna(2) for feat_type in feature_types}
+            ix_sort = {feat_type: (-corr_df[feat_type]).values.argsort(axis=1) for feat_type in feature_types}
+            # rows = turbine_id, columns = order of correlation from highest to lowest
+            sort_df = {feat_type: pd.DataFrame(corr_df[feat_type].columns.to_numpy()[ix_sort[feat_type]], index=turbine_ids) for feat_type in feature_types}
+            cluster_turbines = {feat_type: {tid: turbine_ids[np.where(corr_df[feat_type].loc[tid, :] > r2_threshold)[0]] for tid in turbine_ids} for feat_type in feature_types}
+             
             flag = []
             for feat_type in feature_types:
-                data_mean = pl.mean_horizontal(cs.starts_with(feat_type))
-                data_std = pl.concat_list([c for c in col if c.startswith(feat_type)]).list.std(ddof=1) * threshold
-                flag.append(data.select(cs.starts_with(feat_type)).select(pl.all().le(data_mean - data_std) \
-                                                | pl.all().ge(data_mean + data_std)))
+                for tid in turbine_ids:
+                    
+                    if len(cluster_turbines[feat_type][tid]) < min_correlated_assets:
+                        cluster_turbines[feat_type][tid] = np.unique(np.concatenate([cluster_turbines[feat_type][tid], 
+                                                                           sort_df[feat_type].loc[tid, :(min_correlated_assets - len(cluster_turbines[feat_type][tid]))].values]))
+
+                    corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines[feat_type][tid]]
+                    data_mean = pl.mean_horizontal(corr_features)
+                    data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
+                    
+                    flag.append(data.select(corr_features)
+                                           .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
+                                                    | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper"))\
+                                           .alias(f"{feat_type}_{tid}")))
                 
-                # y = data.select(cs.starts_with(feat_type)).collect().select(data_mean).to_numpy().flatten()
-                # y_m = data.select(cs.starts_with(feat_type)).collect().select(data_mean - data_std).to_numpy().flatten()
-                # y_p = data.select(cs.starts_with(feat_type)).collect().select(data_mean + data_std).to_numpy().flatten()
-                # x = data.select(f"{feat_type}_1").collect().to_numpy().flatten()
-                # y_p = y_p[138496:138554]
-                # y_m = y_m[138496:138554]
-                # y = y[138496:138554] # mean wind direction
-                # x = x[138496:138554] # deviated wind direction at turbine 1
-                
-            flag = pl.concat(flag, how="horizontal")
-            
-        return flag.collect(streaming=True).to_pandas()
+        flag = pl.concat(flag, how="horizontal")
+        return flag.collect().to_pandas()
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
@@ -272,7 +285,7 @@ def window_range_flag(
     return flag
 
 
-@series_method(data_cols=["bin_col", "value_col"])
+# @series_method(data_cols=["bin_col", "value_col"])
 def bin_filter(
     bin_col: pd.Series | str,
     value_col: pd.Series | str,
@@ -283,7 +296,8 @@ def bin_filter(
     bin_max: float = None,
     threshold_type: str = "std",
     direction: str = "all",
-    data: pd.DataFrame = None,
+    data_pd: pd.DataFrame = None,
+    data_pl: pl.DataFrame | pl.LazyFrame = None,
     return_center: bool = False
 ):
     """Flag time stamps for which data in `value_col` when binned by data in `bin_col` into bins of
@@ -316,66 +330,123 @@ def bin_filter(
             "Incorrect `direction` specified; must be one of 'all', 'above', or 'below'."
         )
 
-    # Set bin min and max values if not passed to function
-    if bin_min is None:
-        bin_min = np.min(bin_col.values)
-    if bin_max is None:
-        bin_max = np.max(bin_col.values)
+    if data_pd is not None:
+        bin_col = data_pd.loc[:, bin_col].copy()
+        value_col = data_pd.loc[:, value_col].copy()
+        
+        # Set bin min and max values if not passed to function
+        if bin_min is None:
+            bin_min = np.min(bin_col.values)
+        if bin_max is None:
+            bin_max = np.max(bin_col.values)
 
-    # Define bin edges
-    bin_edges = np.arange(bin_min, bin_max, bin_width)
+        # Define bin edges
+        bin_edges = np.arange(bin_min, bin_max, bin_width)
 
-    # Ensure the last bin edge value is bin_max
-    bin_edges = np.unique(np.clip(np.append(bin_edges, bin_max), bin_min, bin_max))
+        # Ensure the last bin edge value is bin_max
+        bin_edges = np.unique(np.clip(np.append(bin_edges, bin_max), bin_min, bin_max))
 
-    # Bin the data and recreate the comparison data as a multi-column data frame
-    which_bin_col = np.digitize(bin_col, bin_edges, right=True)
+        # Bin the data and recreate the comparison data as a multi-column data frame
+        which_bin_col = np.digitize(bin_col, bin_edges, right=True) # bins[i-1] < x <= bins[i]
 
-    # Create the flag values as a matrix with each column being the timestamp's binned value,
-    # e.g., all columns values are NaN if the data point is not in that bin
-    flag_vals = (
-        value_col.to_frame().set_index(pd.Series(which_bin_col, name="bin"), append=True).unstack()
-    )
-    drop = [i for i, el in enumerate(flag_vals.columns.names) if el != "bin"]
-    flag_vals.columns = flag_vals.columns.droplevel(drop).rename(None)
+        # Create the flag values as a matrix with each column being the timestamp's binned value,
+        # e.g., all columns values are NaN if the data point is not in that bin
+        flag_vals = (
+            value_col.to_frame().set_index(pd.Series(which_bin_col, name="bin"), append=True).unstack()
+        )
+        drop = [i for i, el in enumerate(flag_vals.columns.names) if el != "bin"]
+        flag_vals.columns = flag_vals.columns.droplevel(drop).rename(None)
 
-    # Create a False array as default, so flags are set to True
-    flag_df = pd.DataFrame(np.zeros_like(flag_vals, dtype=bool), index=flag_vals.index)
+        # Create a False array as default, so flags are set to True
+        flag_df = pd.DataFrame(np.zeros_like(flag_vals, dtype=bool), index=flag_vals.index)
 
-    # Get center of binned data
-    if center_type == "median":
-        center = np.nanmedian(flag_vals.values, axis=0)
+        # Get center of binned data
+        if center_type == "median":
+            center = np.nanmedian(flag_vals.values, axis=0)
+        else:
+            center = np.nanmean(flag_vals.values, axis=0)
+        center = pd.DataFrame(
+            np.full(flag_vals.shape, center),
+            index=flag_vals.index,
+            columns=flag_vals.columns,
+        )
+
+        # Define threshold of data flag
+        if threshold_type == "std":
+            deviation = np.nanstd(flag_vals.values, ddof=1, axis=0) * threshold
+        elif threshold_type == "scalar":
+            deviation = threshold
+        else:  # median absolute deviation (mad)
+            deviation = np.nanmedian(np.abs(flag_vals.values - center), axis=0) * threshold
+
+        # Perform flagging depending on specfied direction
+        if direction in ("above", "all"):
+            flag_df |= flag_vals > center + deviation
+        if direction in ("below", "all"):
+            flag_df |= flag_vals < center - deviation
+
+        # Get all instances where the value is True, and reset any values outside the bin limits
+        flag_vals = pd.Series(np.nanmax(flag_df, axis=1), index=flag_df.index, dtype="bool")
+        flag_vals.loc[(bin_col <= bin_min) | (bin_col > bin_max)] = False
     else:
-        center = np.nanmean(flag_vals.values, axis=0)
-    center = pd.DataFrame(
-        np.full(flag_vals.shape, center),
-        index=flag_vals.index,
-        columns=flag_vals.columns,
-    )
+        
+        # Set bin min and max values if not passed to function
+        if bin_min is None:
+            bin_min = data_pl.select(pl.col(bin_col).min()).collect().item()
+        if bin_max is None:
+            bin_max = data_pl.select(pl.col(bin_col).max()).collect().item()
+            
+        # Define bin edges
+        bin_edges = np.arange(bin_min, bin_max, bin_width)
+        
+        # Ensure the last bin edge value is bin_max
+        bin_edges = np.unique(np.clip(np.append(bin_edges, bin_max), bin_min, bin_max))
 
-    # Define threshold of data flag
-    if threshold_type == "std":
-        deviation = np.nanstd(flag_vals.values, ddof=1, axis=0) * threshold
-    elif threshold_type == "scalar":
-        deviation = threshold
-    else:  # median absolute deviation (mad)
-        deviation = np.nanmedian(np.abs(flag_vals.values - center.values), axis=0) * threshold
+        # Bin the data and recreate the comparison data as a multi-column data frame
+        which_bin_col = data_pl.select(pl.col(bin_col)).collect().to_series().cut(bin_edges, labels=[str(i) for i in np.arange(1+len(bin_edges))]).cast(int).to_numpy()
+        
+        # Create the flag values as a matrix with each column being the timestamp's binned value,
+        # e.g., all columns values are NaN if the data point is not in that bin
+        flag_vals = data_pl.select(pl.col(value_col))\
+                           .with_columns(bin=which_bin_col)\
+                           .with_row_index()\
+                           .collect().pivot("bin", index="index")\
+                           .select([pl.col(str(col)) for col in sorted(set(which_bin_col))])
 
-    # Perform flagging depending on specfied direction
-    if direction in ("above", "all"):
-        flag_df |= flag_vals > center + deviation
-    if direction in ("below", "all"):
-        flag_df |= flag_vals < center - deviation
+        # Create a False array as default, so flags are set to True
+        # flag_df = pd.DataFrame(np.zeros_like(flag_vals, dtype=bool), index=flag_vals.index)
 
-    # Get all instances where the value is True, and reset any values outside the bin limits
-    flag = pd.Series(np.nanmax(flag_df, axis=1), index=flag_df.index, dtype="bool")
-    flag.loc[(bin_col <= bin_min) | (bin_col > bin_max)] = False
-    
+        # Get center of binned data
+        if center_type == "median":
+            center = flag_vals.select(pl.all().median())
+        else:
+            center = flag_vals.select(pl.all().mean())
+         
+        # Define threshold of data flag
+        if threshold_type == "std":
+            deviation = flag_vals.select(pl.all().std(ddof=1) * threshold)
+        elif threshold_type == "scalar":
+            deviation = pl.DataFrame({col: threshold for col in flag_vals.collect_schema().names()})
+        else:  # median absolute deviation (mad)
+            deviation = flag_vals.select([pl.col(c) - center[c] for c in flag_vals.collect_schema().names()])\
+                                 .select(pl.all().abs().median() * threshold)
+        
+        # Perform flagging depending on specfied direction
+        if direction == "all":
+            flag_vals.select([(pl.col(c) > center[c] + deviation[c]) | (pl.col(c) < center[c] - deviation[c]) for c in flag_vals.collect_schema().names()])
+        elif direction == "below":
+            flag_vals = flag_vals.select([pl.col(c) < center[c] - deviation[c] for c in flag_vals.collect_schema().names()])
+        elif direction == "above":
+            flag_vals.select([pl.col(c) > center[c] + deviation[c] for c in flag_vals.collect_schema().names()])
+        
+        # Get all instances where the value is True, and reset any values outside the bin limits
+        flag_vals = flag_vals.select(pl.max_horizontal(pl.all()).alias(bin_col))
+        flag_vals = pl.concat([flag_vals, data_pl.select(pl.col(bin_col).alias("values")).collect()], how="horizontal").select(pl.when((pl.col("values") <= bin_min) | (pl.col("values") > bin_max)).then(pl.lit(False)).otherwise(pl.col(bin_col)).alias(bin_col))
+            
     if return_center:
-        return flag, center
+        return flag_vals, center
     else:
-        return flag
-
+        return flag_vals
 
 @dataframe_method(data_cols=["data_col1", "data_col2"])
 def cluster_mahalanobis_2d(
