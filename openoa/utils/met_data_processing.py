@@ -86,7 +86,7 @@ def compute_wind_direction(
     Returns:
         :obj:`pandas.Series`: wind direction; units of degrees
     """
-    wd = 180 + np.arctan2(u, v) * 180 / np.pi  # Calculate wind direction in degrees
+    wd = 180 + np.rad2deg(np.arctan2(u, v))  # Calculate wind direction in degrees
     return pd.Series(np.where(wd != 360, wd, 0))
 
 
