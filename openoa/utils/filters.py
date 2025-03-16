@@ -221,43 +221,30 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            print(224)
             corr_df = {feat_type: asset_correlation_matrix_pl(data_pl, feat_type) for feat_type in feature_types}
-            print(226)
             turbine_ids = corr_df[feature_types[0]].columns.to_numpy()
             # Sort the correlated values according to the highest value, with nans at the end.
             corr_df = {feat_type: corr_df[feat_type].fillna(2) for feat_type in feature_types}
-            print(230)
             ix_sort = {feat_type: (-corr_df[feat_type]).values.argsort(axis=1) for feat_type in feature_types}
-            print(232)
             # rows = turbine_id, columns = order of correlation from highest to lowest
             sort_df = {feat_type: pd.DataFrame(corr_df[feat_type].columns.to_numpy()[ix_sort[feat_type]], index=turbine_ids) for feat_type in feature_types}
-            print(235)
             cluster_turbines = {feat_type: {tid: turbine_ids[np.where(corr_df[feat_type].loc[tid, :] > r2_threshold)[0]] for tid in turbine_ids} for feat_type in feature_types}
-            print(237)
             
             flag = []
             for feat_type in feature_types:
                 for tid in turbine_ids:
-                    print(242, feat_type, tid)
                     if len(cluster_turbines[feat_type][tid]) < min_correlated_assets:
-                        print(244, feat_type, tid)
                         cluster_turbines[feat_type][tid] = np.unique(np.concatenate([cluster_turbines[feat_type][tid], 
                                                                            sort_df[feat_type].loc[tid, :(min_correlated_assets - len(cluster_turbines[feat_type][tid]))].values]))
-                        print(247, feat_type, tid)
                     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines[feat_type][tid]]
-                    print(249, feat_type, tid)
                     data_mean = pl.mean_horizontal(corr_features)
-                    print(251, feat_type, tid)
                     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
-                    print(253, feat_type, tid)
                     flag.append(data.select(corr_features)
                                            .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                                                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper"))\
                                            .alias(f"{feat_type}_{tid}")))
-                    print(258, feat_type, tid)
                 
-        flag = pl.concat(flag, how="horizontal")
+            flag = pl.concat(flag, how="horizontal")
         return flag.collect().to_pandas()
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
