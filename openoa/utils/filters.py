@@ -153,6 +153,7 @@ def unresponsive_flag(
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
+# @profile
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
     data_pl: pl.LazyFrame | None = None,
@@ -245,7 +246,11 @@ def std_range_flag(
                                            .alias(f"{feat_type}_{tid}")))
                 
             flag = pl.concat(flag, how="horizontal")
-        return flag.collect().to_pandas()
+        
+        # flag[flag == None] = False
+        flag = flag.select(pl.all().fill_null(False).cast(bool))
+        # flag = flag.astype("bool")
+        return flag
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
