@@ -225,14 +225,12 @@ def std_range_flag(
             # corr_df = {}
             flag = []
             for feat_type in feature_types:
-                corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                corr_df = asset_correlation_matrix_pl(data_pl, feat_type).fillna(2)
                 turbine_ids = corr_df.columns.to_numpy()
                 # Sort the correlated values according to the highest value, with nans at the end.
-                corr_df = corr_df.fillna(2)
                 ix_sort = (-corr_df).values.argsort(axis=1)
                 # rows = turbine_id, columns = order of correlation from highest to lowest
-                sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=turbine_ids)
-                # cluster_turbines = {}
+                sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                 for tid in turbine_ids:
                     cluster_turbines = corr_df.loc[tid, corr_df.loc[tid, :] > r2_threshold].index.to_numpy()
                     if len(cluster_turbines) < min_correlated_assets:
