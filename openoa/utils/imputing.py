@@ -212,14 +212,16 @@ def impute_all_assets_by_correlation(
                                             impute_df=data, impute_col=impute_col, reference_col=reference_col,
                                             target_id=target_id, method=method, degree=degree) 
                                             for target_id in corr_df.columns}
-                
+                data_cols = []
                 for tid, fut in futures.items():
                     res = fut.result()
                     if res is None:
                         continue
                     _, sub_df = res
-                    data = data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")
+                    # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")
+                    data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{tid}"}))
     else:
+        data_cols = []
         for target_id in corr_df.columns:
             
             res = impute_func(data=data,
@@ -233,11 +235,12 @@ def impute_all_assets_by_correlation(
                 continue
             
             _, sub_df = res
-            data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
+            # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
+            data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{tid}"}))
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})
-    return data
+    return pl.concat([data.select("time")] + data_cols, how="horizontal")
 
 def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
     print(f"Imputing feature {impute_col} for asset {target_id}")
@@ -255,7 +258,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     # Get the correlation-based neareast neighbor and data
     id_sort_neighbor = 0
     id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
-    r2_neighbor = corr_df.row(corr_df.columns.index(target_id))[corr_df.columns.index(id_neighbor)]
+    r2_neighbor = corr_df[id_neighbor][corr_df.columns.index(target_id)]
     
     # If the R2 value is too low, then move on to the next asset
     if r2_neighbor <= r2_threshold:
@@ -264,7 +267,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     num_neighbors = corr_df.shape[0] - 1
     while (any_nans) and (num_neighbors > 0) and (r2_neighbor > r2_threshold):
         # Get the imputed data based on the correlation-based next nearest neighbor
-        reference_df = data.select("time", cs.ends_with(f"_{id_neighbor}").alias(impute_col)).collect().lazy()
+        reference_df = data.select("time", cs.ends_with(f"_{id_neighbor}").alias(impute_col))
         try:
             imputed_data = impute_data(
                 # target_data=data.xs(target_id, level=1).loc[:, [impute_col]],
@@ -288,7 +291,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
         num_neighbors -= 1
         id_sort_neighbor += 1
         id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
-        r2_neighbor = corr_df.row(corr_df.columns.index(target_id))[corr_df.columns.index(id_neighbor)]
+        r2_neighbor = corr_df[id_neighbor][corr_df.columns.index(target_id)]
 
     return ix_target, sub_df.fill_nan(None)
 
@@ -368,11 +371,7 @@ def asset_correlation_matrix_pl(data: pl.LazyFrame, value_col: str) -> pd.DataFr
         .alias(f"{re.search(f"(?<={value_col}_)\\w+$", cols[c]).group(0)}CORR{re.search(f"(?<={value_col}_)\\w+$", cols[cc]).group(0)}") 
         for c in range(n_cols) for cc in range(c, n_cols) if c != cc]).collect()
     corr_df = pl.DataFrame(data={tid1: [(corr_df[f"{tid1}CORR{tid2}"][0] if f"{tid1}CORR{tid2}" in corr_df else corr_df[f"{tid2}CORR{tid1}"][0]) if tid1 != tid2 else 1.0 for tid2 in turbine_ids] for tid1 in turbine_ids}) 
-    # corr_df = data.select(cs.starts_with(value_col).fill_null(strategy="forward").fill_null(strategy="backward").name.map(lambda col: re.search(f"(?<={value_col}_)\\w+$", col).group(0)))\
-    #               .collect().corr()
-    # corr_df = data.select(cs.starts_with(value_col).name.map(lambda col: re.search(f"(?<={value_col}_)\\w+$", col).group(0)))\
-    #               .collect().to_pandas().corr()
-    # corr_df = corr_df.with_columns(pl.when(pl.all() != 1.0).then(pl.all()))
+    
     return corr_df
 
 def asset_correlation_matrix_pd(data: pd.DataFrame, value_col: str) -> pd.DataFrame:

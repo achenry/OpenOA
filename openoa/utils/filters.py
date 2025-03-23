@@ -7,11 +7,11 @@ from __future__ import annotations
 from typing import Literal
 import numpy as np
 import polars as pl
-import polars.selectors as cs
 import scipy as sp
 import pandas as pd
 from sklearn.cluster import KMeans
 from memory_profiler import profile
+from psutil import virtual_memory
 
 from openoa.utils._converters import (
     series_to_df,
@@ -161,7 +161,8 @@ def std_range_flag(
     over: str = Literal["time", "asset"],
     feature_types: list[str] | None = None,
     r2_threshold: float | None = None,
-    min_correlated_assets: int = None
+    min_correlated_assets: int = None,
+    return_ram: bool = False
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -221,10 +222,13 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            # corr_df = {}
+            max_ram = 0
+                
             flag = []
             for feat_type in feature_types:
+                max_ram = max(max_ram, virtual_memory().percent)
                 corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                max_ram = max(max_ram, virtual_memory().percent)
                 turbine_ids = np.array(corr_df.columns)
                 # Sort the correlated values according to the highest value, with nans at the end.
                 ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
@@ -236,7 +240,8 @@ def std_range_flag(
                         cluster_turbines = np.concatenate(
                             [cluster_turbines, 
                                     sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
-
+                    
+                    max_ram = max(max_ram, virtual_memory().percent)
                     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
                     data_mean = pl.mean_horizontal(corr_features)
                     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
@@ -244,13 +249,19 @@ def std_range_flag(
                                            .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                                                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper"))\
                                            .alias(f"{feat_type}_{tid}")).collect().lazy())
+                    max_ram = max(max_ram, virtual_memory().percent)
                     # TODO could collect and write this feature type 
             flag = pl.concat(flag, how="horizontal")
+            max_ram = max(max_ram, virtual_memory().percent)
         
         # flag[flag == None] = False
         flag = flag.select(pl.all().fill_null(False).cast(bool))
+        max_ram = max(max_ram, virtual_memory().percent)
         # flag = flag.astype("bool")
-        return flag
+        if return_ram:
+            return flag, max_ram
+        else:
+            return flag
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
