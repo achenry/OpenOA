@@ -183,11 +183,13 @@ def impute_all_assets_by_correlation(
         # impute_df = None
 
         # Create correlation matrix between different assets
-        corr_df = asset_correlation_matrix_pl(data_pl, impute_col)
+        # set diagonal values to Null
+        corr_df = asset_correlation_matrix_pl(data_pl, impute_col)\
+            .with_columns(pl.when(pl.all() != 1.0).then(pl.all())) 
 
         # Sort the correlated values according to the highest value, with nans at the end.
-        ix_sort = (-corr_df.fillna(-2)).values.argsort(axis=1)
-        sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=corr_df.columns)
+        ix_sort = (-corr_df.fill_null(-2).to_numpy()).argsort(axis=1)
+        sort_df = pd.DataFrame(np.array(corr_df.columns)[ix_sort], index=corr_df.columns)
         data = data_pl #.collect().lazy()
         impute_func = impute_target_id_pl
 
@@ -253,14 +255,14 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     # Get the correlation-based neareast neighbor and data
     id_sort_neighbor = 0
     id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
-    r2_neighbor = corr_df.loc[target_id, id_neighbor]
+    r2_neighbor = corr_df.row(corr_df.columns.index(target_id))[corr_df.columns.index(id_neighbor)]
     
     # If the R2 value is too low, then move on to the next asset
     if r2_neighbor <= r2_threshold:
         return
 
     num_neighbors = corr_df.shape[0] - 1
-    while (any_nans) & (num_neighbors > 0) & (r2_neighbor > r2_threshold):
+    while (any_nans) and (num_neighbors > 0) and (r2_neighbor > r2_threshold):
         # Get the imputed data based on the correlation-based next nearest neighbor
         reference_df = data.select("time", cs.ends_with(f"_{id_neighbor}").alias(impute_col)).collect().lazy()
         try:
@@ -286,7 +288,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
         num_neighbors -= 1
         id_sort_neighbor += 1
         id_neighbor = sort_df.loc[target_id, id_sort_neighbor]
-        r2_neighbor = corr_df.loc[target_id, id_neighbor]
+        r2_neighbor = corr_df.row(corr_df.columns.index(target_id))[corr_df.columns.index(id_neighbor)]
 
     return ix_target, sub_df.fill_nan(None)
 
@@ -359,11 +361,18 @@ def asset_correlation_matrix_pl(data: pl.LazyFrame, value_col: str) -> pd.DataFr
 
     # corr_df = data.collect().pivot(on="turbine_id", index="time", values=value_col, sort_columns=True)\
     #                         .drop("time").to_pandas().corr()
-    corr_df = data.select(cs.starts_with(value_col)).rename(
-        # lambda col: col.split("_")[-1]
-        lambda col: re.search(f"(?<={value_col}_)\w+$", col).group(0)
-        ).collect().to_pandas().corr()
-    np.fill_diagonal(corr_df.values, np.nan)
+    cols = data.select(cs.starts_with(value_col)).collect_schema().names()
+    n_cols = len(cols)
+    turbine_ids = [re.search(f"(?<={value_col}_)\\w+$", col).group(0) for col in cols]
+    corr_df = data.select([pl.corr(cols[c], cols[cc])\
+        .alias(f"{re.search(f"(?<={value_col}_)\\w+$", cols[c]).group(0)}CORR{re.search(f"(?<={value_col}_)\\w+$", cols[cc]).group(0)}") 
+        for c in range(n_cols) for cc in range(c, n_cols) if c != cc]).collect()
+    corr_df = pl.DataFrame(data={tid1: [(corr_df[f"{tid1}CORR{tid2}"][0] if f"{tid1}CORR{tid2}" in corr_df else corr_df[f"{tid2}CORR{tid1}"][0]) if tid1 != tid2 else 1.0 for tid2 in turbine_ids] for tid1 in turbine_ids}) 
+    # corr_df = data.select(cs.starts_with(value_col).fill_null(strategy="forward").fill_null(strategy="backward").name.map(lambda col: re.search(f"(?<={value_col}_)\\w+$", col).group(0)))\
+    #               .collect().corr()
+    # corr_df = data.select(cs.starts_with(value_col).name.map(lambda col: re.search(f"(?<={value_col}_)\\w+$", col).group(0)))\
+    #               .collect().to_pandas().corr()
+    # corr_df = corr_df.with_columns(pl.when(pl.all() != 1.0).then(pl.all()))
     return corr_df
 
 def asset_correlation_matrix_pd(data: pd.DataFrame, value_col: str) -> pd.DataFrame:

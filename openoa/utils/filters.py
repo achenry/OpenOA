@@ -22,7 +22,6 @@ from openoa.utils._converters import (
 
 from openoa.utils.imputing import asset_correlation_matrix_pl, asset_correlation_matrix_pd
 
-
 def range_flag(
     data: pd.DataFrame | pd.Series,
     lower: float | list[float],
@@ -225,27 +224,27 @@ def std_range_flag(
             # corr_df = {}
             flag = []
             for feat_type in feature_types:
-                corr_df = asset_correlation_matrix_pl(data_pl, feat_type).fillna(2)
-                turbine_ids = corr_df.columns.to_numpy()
+                corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                turbine_ids = np.array(corr_df.columns)
                 # Sort the correlated values according to the highest value, with nans at the end.
-                ix_sort = (-corr_df).values.argsort(axis=1)
+                ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
                 # rows = turbine_id, columns = order of correlation from highest to lowest
                 sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
-                for tid in turbine_ids:
-                    cluster_turbines = corr_df.loc[tid, corr_df.loc[tid, :] > r2_threshold].index.to_numpy()
+                for t, tid in enumerate(turbine_ids):
+                    cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
                     if len(cluster_turbines) < min_correlated_assets:
                         cluster_turbines = np.concatenate(
                             [cluster_turbines, 
                                     sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
-            
+
                     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
                     data_mean = pl.mean_horizontal(corr_features)
                     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
                     flag.append(data.select(corr_features)
                                            .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                                                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper"))\
-                                           .alias(f"{feat_type}_{tid}")))
-                
+                                           .alias(f"{feat_type}_{tid}")).collect().lazy())
+                    # TODO could collect and write this feature type 
             flag = pl.concat(flag, how="horizontal")
         
         # flag[flag == None] = False
