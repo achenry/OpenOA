@@ -222,22 +222,25 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            corr_df = {feat_type: asset_correlation_matrix_pl(data_pl, feat_type) for feat_type in feature_types}
-            turbine_ids = corr_df[feature_types[0]].columns.to_numpy()
-            # Sort the correlated values according to the highest value, with nans at the end.
-            corr_df = {feat_type: corr_df[feat_type].fillna(2) for feat_type in feature_types}
-            ix_sort = {feat_type: (-corr_df[feat_type]).values.argsort(axis=1) for feat_type in feature_types}
-            # rows = turbine_id, columns = order of correlation from highest to lowest
-            sort_df = {feat_type: pd.DataFrame(corr_df[feat_type].columns.to_numpy()[ix_sort[feat_type]], index=turbine_ids) for feat_type in feature_types}
-            cluster_turbines = {feat_type: {tid: turbine_ids[np.where(corr_df[feat_type].loc[tid, :] > r2_threshold)[0]] for tid in turbine_ids} for feat_type in feature_types}
-            
+            # corr_df = {}
             flag = []
             for feat_type in feature_types:
+                corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                turbine_ids = corr_df.columns.to_numpy()
+                # Sort the correlated values according to the highest value, with nans at the end.
+                corr_df = corr_df.fillna(2)
+                ix_sort = (-corr_df).values.argsort(axis=1)
+                # rows = turbine_id, columns = order of correlation from highest to lowest
+                sort_df = pd.DataFrame(corr_df.columns.to_numpy()[ix_sort], index=turbine_ids)
+                # cluster_turbines = {}
                 for tid in turbine_ids:
-                    if len(cluster_turbines[feat_type][tid]) < min_correlated_assets:
-                        cluster_turbines[feat_type][tid] = np.unique(np.concatenate([cluster_turbines[feat_type][tid], 
-                                                                           sort_df[feat_type].loc[tid, :(min_correlated_assets - len(cluster_turbines[feat_type][tid]))].values]))
-                    corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines[feat_type][tid]]
+                    cluster_turbines = corr_df.loc[tid, corr_df.loc[tid, :] > r2_threshold].index.to_numpy()
+                    if len(cluster_turbines) < min_correlated_assets:
+                        cluster_turbines = np.concatenate(
+                            [cluster_turbines, 
+                                    sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
+            
+                    corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
                     data_mean = pl.mean_horizontal(corr_features)
                     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
                     flag.append(data.select(corr_features)
