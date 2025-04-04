@@ -236,7 +236,7 @@ def impute_all_assets_by_correlation(
             
             _, sub_df = res
             # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
-            data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{tid}"}))
+            data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{target_id}"}))
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})

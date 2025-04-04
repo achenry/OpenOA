@@ -67,7 +67,7 @@ def range_flag(
     # Return back a pd.Series if one was provided, else a pd.DataFrame
     return flag[col[0]] if to_series else flag
 
-# @profile
+
 def unresponsive_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
     data_pl : pl.LazyFrame | None = None,
@@ -152,7 +152,7 @@ def unresponsive_flag(
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
-# @profile
+
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
     data_pl: pl.LazyFrame | None = None,
