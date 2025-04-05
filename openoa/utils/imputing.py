@@ -216,6 +216,7 @@ def impute_all_assets_by_correlation(
                 for tid, fut in futures.items():
                     res = fut.result()
                     if res is None:
+                        # there are no nans
                         continue
                     _, sub_df = res
                     # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")
@@ -232,6 +233,7 @@ def impute_all_assets_by_correlation(
                                 impute_df=data, impute_col=impute_col, reference_col=reference_col,
                                 target_id=target_id, method=method, degree=degree)
             if res is None:
+                # there are no nans
                 continue
             
             _, sub_df = res
@@ -240,7 +242,11 @@ def impute_all_assets_by_correlation(
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})
-    return pl.concat([data.select("time")] + data_cols, how="horizontal")
+    # return pl.concat([data.select("time")] + data_cols, how="horizontal")
+    if data_cols:
+        return pl.concat([data.select("time")] + data_cols, how="horizontal")
+    else:
+        return None
 
 def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
     print(f"Imputing feature {impute_col} for asset {target_id}")
