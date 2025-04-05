@@ -133,6 +133,7 @@ def impute_all_assets_by_correlation(
     method: str = "linear",
     degree: int = 1,
     multiprocessor: str | None = None,
+    save_path: str = None
 ):
     """Imputes NaN data in a Pandas data frame to the best extent possible by considering available data
     across different assets in the data frame. Highest correlated assets are prioritized in the imputation process.
@@ -212,17 +213,22 @@ def impute_all_assets_by_correlation(
                                             impute_df=data, impute_col=impute_col, reference_col=reference_col,
                                             target_id=target_id, method=method, degree=degree) 
                                             for target_id in corr_df.columns}
-                data_cols = []
+                # data_cols = []
+                any_updates = False
                 for tid, fut in futures.items():
                     res = fut.result()
                     if res is None:
                         # there are no nans
                         continue
+                    any_updates = True
                     _, sub_df = res
-                    # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")
-                    data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{tid}"}))
+                    data.update(sub_df.rename({impute_col: f"{impute_col}_{tid}"}), on="time")\
+                        .collect().write_parquet(save_path.replace(".parquet", f"_{impute_col}.parquet"), statistics=False)
+                    data = pl.scan_parquet(save_path.replace(".parquet", f"_{impute_col}.parquet"))
+                    # data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{tid}"}))
     else:
-        data_cols = []
+        # data_cols = []
+        any_updates = False
         for target_id in corr_df.columns:
             
             res = impute_func(data=data,
@@ -235,16 +241,22 @@ def impute_all_assets_by_correlation(
             if res is None:
                 # there are no nans
                 continue
-            
+            any_updates = True
             _, sub_df = res
-            # data = data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")
-            data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{target_id}"}))
+            data.update(sub_df.rename({impute_col: f"{impute_col}_{target_id}"}), on="time")\
+                .collect().write_parquet(save_path.replace(".parquet", f"_{impute_col}.parquet"), statistics=False)
+            data = pl.scan_parquet(save_path.replace(".parquet", f"_{impute_col}.parquet"))
+            # data_cols.append(sub_df.select(impute_col).rename({impute_col: f"{impute_col}_{target_id}"}))
 
     # Return the results with the impute_col renamed with a leading "imputed_" for clarity
     # return impute_df.rename(columns={c: f"imputed_{c}" for c in impute_df.columns})
     # return pl.concat([data.select("time")] + data_cols, how="horizontal")
-    if data_cols:
-        return pl.concat([data.select("time")] + data_cols, how="horizontal")
+    # if data_cols:
+    #     return pl.concat([data.select("time")] + data_cols, how="horizontal")
+    # else:
+    #     return None
+    if any_updates:
+        return data
     else:
         return None
 
