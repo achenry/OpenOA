@@ -13,12 +13,12 @@ from numpy.polynomial import Polynomial
 import re
 
 mpi_exists = False
-try:
-    from mpi4py import MPI
-    from mpi4py.futures import MPICommExecutor
-    mpi_exists = True
-except:
-    print("No MPI available on system.")
+# try:
+#     from mpi4py import MPI
+#     from mpi4py.futures import MPICommExecutor
+#     mpi_exists = True
+# except:
+#     print("No MPI available on system.")
     
 import numexpr as ne
 
@@ -196,12 +196,12 @@ def impute_all_assets_by_correlation(
 
     # Loop over the assets and impute missing data
     if multiprocessor is not None:
-        if multiprocessor == "mpi" and mpi_exists:
-            executor = MPICommExecutor(MPI.COMM_WORLD, root=0)
-        else:  # "cf" case
-            max_workers = multiprocessing.cpu_count()
-            executor = ProcessPoolExecutor(max_workers=max_workers,
-                                               mp_context=multiprocessing.get_context("spawn"))
+        # if multiprocessor == "mpi" and mpi_exists:
+        #     executor = MPICommExecutor(MPI.COMM_WORLD, root=0)
+        # else:  # "cf" case
+        max_workers = multiprocessing.cpu_count()
+        executor = ProcessPoolExecutor(max_workers=max_workers,
+                                            mp_context=multiprocessing.get_context("spawn"))
         with executor as ex:
             if ex is not None:
                 futures = {target_id: ex.submit(impute_func, 
