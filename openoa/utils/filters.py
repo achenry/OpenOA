@@ -418,7 +418,9 @@ def bin_filter(
         # Bin the data and recreate the comparison data as a multi-column data frame
         which_bin_col = data_pl.select(pl.col(bin_col)).collect().to_series()\
                                .cut(bin_edges, labels=[str(i) for i in np.arange(1+len(bin_edges))])\
-                               .cast(pl.String).str.to_integer().to_numpy()
+                               .cast(pl.String).str.to_integer().to_numpy().astype(int)
+                               
+        which_bin_col[data_pl.with_row_index().filter(pl.col(bin_col).is_null()).select("index").collect().to_numpy().flatten()] = len(bin_edges)
         
         # Create the flag values as a matrix with each column being the timestamp's binned value,
         # e.g., all columns values are NaN if the data point is not in that bin
