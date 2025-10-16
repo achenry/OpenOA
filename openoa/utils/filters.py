@@ -371,7 +371,7 @@ def bin_filter(
         flag_vals.columns = flag_vals.columns.droplevel(drop).rename(None)
 
         # Create a False array as default, so flags are set to True
-        flag_df = pd.DataFrame(np.zeros_like(flag_vals, dtype=bool), index=flag_vals.index)
+        flag_df = pd.DataFrame(np.zeros_like(flag_vals, dtype=bool), index=flag_vals.index, columns=flag_vals.columns)
 
         # Get center of binned data
         if center_type == "median":
@@ -402,7 +402,7 @@ def bin_filter(
         flag_vals = pd.Series(np.nanmax(flag_df, axis=1), index=flag_df.index, dtype="bool")
         flag_vals.loc[(bin_col <= bin_min) | (bin_col > bin_max)] = False
     else:
-        
+        # data_pl = data_pl.filter(pl.col(value_col).is_not_null())
         # Set bin min and max values if not passed to function
         if bin_min is None:
             bin_min = data_pl.select(pl.col(bin_col).min()).collect().item()
@@ -416,11 +416,14 @@ def bin_filter(
         bin_edges = np.unique(np.clip(np.append(bin_edges, bin_max), bin_min, bin_max))
 
         # Bin the data and recreate the comparison data as a multi-column data frame
-        which_bin_col = data_pl.select(pl.col(bin_col)).collect().to_series().cut(bin_edges, labels=[str(i) for i in np.arange(1+len(bin_edges))]).cast(int).to_numpy()
+        which_bin_col = data_pl.select(pl.col(bin_col)).collect().to_series()\
+                               .cut(bin_edges, labels=[str(i) for i in np.arange(1+len(bin_edges))])\
+                               .cast(pl.String).str.to_integer().to_numpy()
         
         # Create the flag values as a matrix with each column being the timestamp's binned value,
         # e.g., all columns values are NaN if the data point is not in that bin
-        flag_vals = data_pl.select(pl.col(value_col))\
+        flag_vals = data_pl\
+                           .select(pl.col(value_col))\
                            .with_columns(bin=which_bin_col)\
                            .with_row_index()\
                            .collect().pivot("bin", index="index")\
@@ -453,8 +456,12 @@ def bin_filter(
             flag_vals.select([pl.col(c) > center[c] + deviation[c] for c in flag_vals.collect_schema().names()])
         
         # Get all instances where the value is True, and reset any values outside the bin limits
-        flag_vals = flag_vals.select(pl.max_horizontal(pl.all()).alias(bin_col))
-        flag_vals = pl.concat([flag_vals, data_pl.select(pl.col(bin_col).alias("values")).collect()], how="horizontal").select(pl.when((pl.col("values") <= bin_min) | (pl.col("values") > bin_max)).then(pl.lit(False)).otherwise(pl.col(bin_col)).alias(bin_col))
+        flag_vals = flag_vals.fill_null(False).select(pl.max_horizontal(pl.all()).alias(bin_col))
+        flag_vals = pl.concat([flag_vals, 
+                               data_pl.select(pl.col(bin_col).alias("values")).collect()], how="horizontal")\
+                      .select(pl.when((pl.col("values") <= bin_min) | (pl.col("values") > bin_max))\
+                                .then(pl.lit(False))\
+                                .otherwise(pl.col(bin_col)).alias(bin_col))
             
     if return_center:
         return flag_vals, center
