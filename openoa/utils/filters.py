@@ -235,6 +235,7 @@ def std_range_flag(
                 # rows = turbine_id, columns = order of correlation from highest to lowest
                 sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                 for t, tid in enumerate(turbine_ids):
+                    print(f"Computing stddev filter for asset {tid}")
                     cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
                     if len(cluster_turbines) < min_correlated_assets:
                         cluster_turbines = np.concatenate(
