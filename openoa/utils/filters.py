@@ -278,10 +278,15 @@ def std_range_flag(
                         flag.append(res)
                         
                         # TODO could collect and write this feature type 
+            
+            logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
             flag = pl.concat(flag, how="horizontal")
+            logging.info(f"Finished combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         
         # flag[flag == None] = False
+        logging.info(f"Started filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         flag = flag.select(pl.all().fill_null(False).cast(bool))
+        logging.info(f"Finished filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         return flag
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
