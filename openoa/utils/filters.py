@@ -173,7 +173,7 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_id
     df = data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-                .alias(f"{feat_type}_{tid}")).collect(engine="streaming").collect()
+                .alias(f"{feat_type}_{tid}")).collect(engine="streaming")
                 #write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
