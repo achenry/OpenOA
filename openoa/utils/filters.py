@@ -15,6 +15,10 @@ from psutil import virtual_memory
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+import os
+
 from openoa.utils._converters import (
     series_to_df,
     series_method,
@@ -154,6 +158,23 @@ def unresponsive_flag(
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
+def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets):
+    logging.info(f"Computing stddev filter for asset {tid}")
+    cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
+    if len(cluster_turbines) < min_correlated_assets:
+        cluster_turbines = np.concatenate(
+            [cluster_turbines, 
+                    sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
+    
+    logging.info(f"Using RAM {virtual_memory().percent}")
+    
+    corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
+    data_mean = pl.mean_horizontal(corr_features)
+    data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
+    return data.select(corr_features)\
+                .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
+                        | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
+                .alias(f"{feat_type}_{tid}")).collect().lazy()
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -163,8 +184,7 @@ def std_range_flag(
     over: str = Literal["time", "asset"],
     feature_types: list[str] | None = None,
     r2_threshold: float | None = None,
-    min_correlated_assets: int = None,
-    return_ram: bool = False
+    min_correlated_assets: int = None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -224,48 +244,42 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            max_ram = 0
-                
-            flag = []
-            for feat_type in feature_types:
-                max_ram = max(max_ram, virtual_memory().percent)
-                corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                max_ram = max(max_ram, virtual_memory().percent)
-                turbine_ids = np.array(corr_df.columns)
-                # Sort the correlated values according to the highest value, with nans at the end.
-                ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
-                # rows = turbine_id, columns = order of correlation from highest to lowest
-                sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
-                for t, tid in enumerate(turbine_ids):
-                    logging.info(f"Computing stddev filter for asset {tid}")
-                    cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
-                    if len(cluster_turbines) < min_correlated_assets:
-                        cluster_turbines = np.concatenate(
-                            [cluster_turbines, 
-                                    sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
-                    
-                    max_ram = max(max_ram, virtual_memory().percent)
-                    logging.info(f"Using RAM {virtual_memory().percent}")
-                    corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
-                    data_mean = pl.mean_horizontal(corr_features)
-                    data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
-                    flag.append(data.select(corr_features)
-                                           .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
-                                                    | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper"))\
-                                           .alias(f"{feat_type}_{tid}")).collect().lazy())
-                    max_ram = max(max_ram, virtual_memory().percent)
-                    # TODO could collect and write this feature type 
+            if True:
+                executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
+                with executor as ex:
+                    if ex is not None:
+                        flag = []
+                        for feat_type in feature_types:
+                            corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                            turbine_ids = np.array(corr_df.columns)
+                            # Sort the correlated values according to the highest value, with nans at the end.
+                            ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
+                            # rows = turbine_id, columns = order of correlation from highest to lowest
+                            sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
+                            for t, tid in enumerate(turbine_ids):
+                                flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets))
+                        
+                        flag = [f.result() for f in flag]
+                        
+            else:
+                flag = []
+                for feat_type in feature_types:
+                    corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                    turbine_ids = np.array(corr_df.columns)
+                    # Sort the correlated values according to the highest value, with nans at the end.
+                    ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
+                    # rows = turbine_id, columns = order of correlation from highest to lowest
+                    sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
+                    for t, tid in enumerate(turbine_ids):
+                        res = _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets)
+                        flag.append(res)
+                        
+                        # TODO could collect and write this feature type 
             flag = pl.concat(flag, how="horizontal")
-            max_ram = max(max_ram, virtual_memory().percent)
         
         # flag[flag == None] = False
         flag = flag.select(pl.all().fill_null(False).cast(bool))
-        max_ram = max(max_ram, virtual_memory().percent)
-        # flag = flag.astype("bool")
-        if return_ram:
-            return flag, max_ram
-        else:
-            return flag
+        return flag
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
