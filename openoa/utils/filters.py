@@ -245,6 +245,7 @@ def std_range_flag(
                                     sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
                     
                     max_ram = max(max_ram, virtual_memory().percent)
+                    logging.info(f"Using RAM {virtual_memory().percent}")
                     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
                     data_mean = pl.mean_horizontal(corr_features)
                     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
