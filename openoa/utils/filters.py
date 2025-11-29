@@ -170,12 +170,14 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_id
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
     logging.info(f"Started computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    data.select(corr_features)\
+    df = data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-                .alias(f"{feat_type}_{tid}")).collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+                .alias(f"{feat_type}_{tid}")).collect(engine="streaming").collect()
+                #write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    return df
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -287,7 +289,7 @@ def std_range_flag(
         logging.info(f"Started filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         flag = flag.select(pl.all().fill_null(False).cast(bool))
         logging.info(f"Finished filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-        return flag
+        return flag.lazy()
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
