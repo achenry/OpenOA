@@ -170,14 +170,14 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_id
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
     logging.info(f"Started computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    df = data.select(corr_features)\
+    data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-                .alias(f"{feat_type}_{tid}")).collect(engine="streaming")
+                .alias(f"{feat_type}_{tid}")).sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
                 #write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
-    return df
+    return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    # return df
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -249,7 +249,7 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            if True:
+            if False:
                 executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
                 with executor as ex:
                     if ex is not None:
