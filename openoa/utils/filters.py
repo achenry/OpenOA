@@ -159,22 +159,22 @@ def unresponsive_flag(
         raise TypeError("Either data_pl or data_pd must be passed.")
 
 def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk):
-    logging.info(f"Computing stddev filter for feature type {feat_type}, asset {tid}")
+    
     cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
     if len(cluster_turbines) < min_correlated_assets:
         cluster_turbines = np.concatenate(
             [cluster_turbines, 
                     sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
     
-    logging.info(f"Using RAM {virtual_memory().percent}")
-    
     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
+    logging.info(f"Started computing stddev filter for feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
                 .alias(f"{feat_type}_{tid}")).collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    logging.info(f"Finished computing stddev filter for feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
 
 def std_range_flag(
@@ -247,7 +247,7 @@ def std_range_flag(
                                             | pl.all().ge(data_mean + data_std))
         else:
             # Create correlation matrix between different assets
-            if False:
+            if True:
                 executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
                 with executor as ex:
                     if ex is not None:
