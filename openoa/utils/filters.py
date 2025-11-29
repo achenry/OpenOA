@@ -262,7 +262,7 @@ def std_range_flag(
                             for t, tid in enumerate(turbine_ids):
                                 flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
                         
-                        flag = [f.result() for f in flag]
+                    flag = [f.result() for f in flag]
                         
             else:
                 flag = []
