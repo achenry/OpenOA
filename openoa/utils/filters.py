@@ -191,8 +191,7 @@ def std_range_flag(
     min_correlated_assets: int = None,
     save_dir: str = None, 
     chunk: int = None,
-    corr_df = None,
-    sort_df=None
+    corr_df = None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -274,12 +273,12 @@ def std_range_flag(
                 for feat_type in feature_types:
                     # corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
                     turbine_ids = np.array(corr_df[feat_type].columns)
-                    # # Sort the correlated values according to the highest value, with nans at the end.
-                    # ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
-                    # # rows = turbine_id, columns = order of correlation from highest to lowest
-                    # sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
+                    # Sort the correlated values according to the highest value, with nans at the end.
+                    ix_sort = (-corr_df[feat_type].to_numpy()).argsort(axis=1)
+                    # rows = turbine_id, columns = order of correlation from highest to lowest
+                    sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     for t, tid in enumerate(turbine_ids):
-                        res = _single_turbine_std_range_flag(data, sort_df[feat_type], corr_df[feat_type], feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
+                        res = _single_turbine_std_range_flag(data, sort_df, corr_df[feat_type], feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res) 
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
