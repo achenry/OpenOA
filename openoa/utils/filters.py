@@ -158,8 +158,8 @@ def unresponsive_flag(
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
-def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk):
-    
+def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk):
+    turbine_ids = np.array(corr_df.columns)
     cluster_turbines = turbine_ids[[i for i, v in enumerate(corr_df.row(t)) if v > r2_threshold]] 
     if len(cluster_turbines) < min_correlated_assets:
         cluster_turbines = np.concatenate(
@@ -191,8 +191,7 @@ def std_range_flag(
     min_correlated_assets: int = None,
     save_dir: str = None, 
     chunk: int = None,
-    corr_df = None, 
-    turbine_ids = None, 
+    corr_df = None,
     sort_df=None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
@@ -266,7 +265,7 @@ def std_range_flag(
                             # rows = turbine_id, columns = order of correlation from highest to lowest
                             sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                             for t, tid in enumerate(turbine_ids):
-                                flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
+                                flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df[feat_type], corr_df[feat_type], feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
                         
                     flag = [f.result() for f in flag]
                         
@@ -280,7 +279,7 @@ def std_range_flag(
                     # # rows = turbine_id, columns = order of correlation from highest to lowest
                     # sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     for t, tid in enumerate(turbine_ids):
-                        res = _single_turbine_std_range_flag(data, sort_df[feat_type], corr_df[feat_type], feat_type, turbine_ids[feat_type], tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
+                        res = _single_turbine_std_range_flag(data, sort_df[feat_type], corr_df[feat_type], feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res) 
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
