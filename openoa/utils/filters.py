@@ -273,7 +273,7 @@ def std_range_flag(
                 flag = []
                 for feat_type in feature_types:
                     # corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                    # turbine_ids = np.array(corr_df.columns)
+                    turbine_ids = np.array(corr_df[feat_type].columns)
                     # # Sort the correlated values according to the highest value, with nans at the end.
                     # ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
                     # # rows = turbine_id, columns = order of correlation from highest to lowest
