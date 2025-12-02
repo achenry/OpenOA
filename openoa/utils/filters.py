@@ -170,14 +170,15 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_id
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
     logging.info(f"Started computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    data.select(corr_features)\
+    df = data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-                .alias(f"{feat_type}_{tid}")).collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+                .alias(f"{feat_type}_{tid}"))
+                #.collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
                 #.sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
-    # return df
+    # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    # return df#
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -189,7 +190,10 @@ def std_range_flag(
     r2_threshold: float | None = None,
     min_correlated_assets: int = None,
     save_dir: str = None, 
-    chunk: int = None
+    chunk: int = None,
+    corr_df = None, 
+    turbine_ids = None, 
+    sort_df=None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -269,14 +273,14 @@ def std_range_flag(
             else:
                 flag = []
                 for feat_type in feature_types:
-                    corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                    turbine_ids = np.array(corr_df.columns)
-                    # Sort the correlated values according to the highest value, with nans at the end.
-                    ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
-                    # rows = turbine_id, columns = order of correlation from highest to lowest
-                    sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
+                    # corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                    # turbine_ids = np.array(corr_df.columns)
+                    # # Sort the correlated values according to the highest value, with nans at the end.
+                    # ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
+                    # # rows = turbine_id, columns = order of correlation from highest to lowest
+                    # sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     for t, tid in enumerate(turbine_ids):
-                        res = _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
+                        res = _single_turbine_std_range_flag(data, sort_df[feat_type], corr_df[feat_type], feat_type, turbine_ids[feat_type], tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res) 
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
