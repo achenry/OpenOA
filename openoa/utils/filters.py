@@ -173,8 +173,8 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_id
     data.select(corr_features)\
                 .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
                         | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-                .alias(f"{feat_type}_{tid}")).sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
-                #write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+                .alias(f"{feat_type}_{tid}")).collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+                #.sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
     # return df
@@ -277,9 +277,7 @@ def std_range_flag(
                     sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     for t, tid in enumerate(turbine_ids):
                         res = _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, turbine_ids, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
-                        flag.append(res)
-                        
-                        # TODO could collect and write this feature type 
+                        flag.append(res) 
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
             flag = pl.concat(flag, how="horizontal")
