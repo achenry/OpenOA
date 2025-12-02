@@ -178,7 +178,7 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
                 #.sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
-    # return df#
+    return df
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
