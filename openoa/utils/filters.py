@@ -294,7 +294,7 @@ def std_range_flag(
                     # logging.info(f"Finished combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-            flag = pl.concat(pl.collect_all(flag), how="horizontal")
+            flag = pl.concat(flag, how="horizontal")
             logging.info(f"Finished combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         
         # flag[flag == None] = False
