@@ -169,17 +169,17 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
-    logging.info(f"Started computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
+    logging.info(f"Returning stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     # df = data.select(corr_features)\
     #             .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
     #                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
     #             .alias(f"{feat_type}_{tid}"))
-    df = data.select(corr_features)\
+    return data.select(corr_features)\
                 .select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=data_mean - data_std, upper_bound=data_mean + data_std, closed="none") \
-                .alias(f"{feat_type}_{tid}")).collect()
-    logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
+                .alias(f"{feat_type}_{tid}"))
+    # logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     
-    return df
+    # return df
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -267,7 +267,6 @@ def std_range_flag(
                     executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
                     with executor as ex:
                         if ex is not None:
-                            
                             for t, tid in enumerate(turbine_ids):
                                 flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df, cdf, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
                         
