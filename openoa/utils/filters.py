@@ -175,7 +175,7 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
     #                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
     #             .alias(f"{feat_type}_{tid}"))
     df = data.select(corr_features)\
-                .select(~pl.col(f"{feat_type}_{tid}").is_between(lower=data_mean - data_std, upper=data_mean + data_std, closed="none") \
+                .select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=data_mean - data_std, upper_bound=data_mean + data_std, closed="none") \
                 .alias(f"{feat_type}_{tid}"))
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     
