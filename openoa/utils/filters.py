@@ -170,14 +170,15 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
     data_mean = pl.mean_horizontal(corr_features)
     data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
     logging.info(f"Started computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
+    # df = data.select(corr_features)\
+    #             .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
+    #                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
+    #             .alias(f"{feat_type}_{tid}"))
     df = data.select(corr_features)\
-                .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
-                        | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
+                .select(~pl.col(f"{feat_type}_{tid}").is_between(lower=data_mean - data_std, upper=data_mean + data_std, closed="none") \
                 .alias(f"{feat_type}_{tid}"))
-                #.collect(engine="streaming").write_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
-                #.sink_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"), maintain_order=True)
     logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    # return pl.scan_parquet(os.path.join(save_dir, f"{chunk}_{feat_type}_{tid}_std_flag.parquet"))
+    
     return df
 
 def std_range_flag(
