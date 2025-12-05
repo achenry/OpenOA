@@ -280,19 +280,19 @@ def std_range_flag(
                         res = _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res)
                     
-                    logging.info(f"Started combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-                    flag = [pl.concat(flag, how="horizontal").collect()]
-                    logging.info(f"Finished combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
+                    # logging.info(f"Started combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
+                    # flag[-1] = pl.concat(pl.collect_all(flag[-len(turbine_ids)]), how="horizontal")
+                    # logging.info(f"Finished combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
             
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-            flag = pl.concat(flag, how="horizontal")
+            flag = pl.concat(pl.collect_all(flag), how="horizontal")
             logging.info(f"Finished combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         
         # flag[flag == None] = False
         logging.info(f"Started filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         flag = flag.select(pl.all().fill_null(False).cast(bool))
         logging.info(f"Finished filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-        return flag
+        return flag.lazy()
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
