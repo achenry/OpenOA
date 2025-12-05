@@ -167,15 +167,19 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
                     sort_df.loc[tid, ~sort_df.loc[tid].isin(cluster_turbines)].values[:min_correlated_assets-len(cluster_turbines)]])
     
     corr_features = [pl.col(f"{feat_type}_{corr_tid}") for corr_tid in cluster_turbines]
-    data_mean = pl.mean_horizontal(corr_features)
-    data_std = pl.concat_list(corr_features).list.std(ddof=1) * threshold
+    
+    logging.info(f"Defining mean/stddev over correlated turbines for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
+    data = data.select(corr_features)\
+               .with_columns(pl.mean_horizontal(corr_features).alias(f"mean_over_assets"), 
+                             (pl.concat_list(corr_features).list.std(ddof=1) * threshold).alias(f"std_over_assets"))
+    
     logging.info(f"Returning stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     # df = data.select(corr_features)\
     #             .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
     #                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
     #             .alias(f"{feat_type}_{tid}"))
-    return data.select(corr_features)\
-                .select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=data_mean - data_std, upper_bound=data_mean + data_std, closed="none") \
+    return data.select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=pl.col("mean_over_assets") - pl.col("std_over_assets"), 
+                                                                 upper_bound=pl.col("mean_over_assets") + pl.col("std_over_assets"), closed="none") \
                 .alias(f"{feat_type}_{tid}"))
     # logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     
