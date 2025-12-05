@@ -190,7 +190,8 @@ def std_range_flag(
     r2_threshold: float | None = None,
     min_correlated_assets: int = None,
     save_dir: str = None, 
-    chunk: int = None
+    chunk: int = None,
+    corr_df: dict[str, pl.DataFrame] = None
 ) -> pd.Series | pd.DataFrame:
     """Flag time stamps for which the measurement is outside of the threshold number of standard deviations
         from the mean across the data.
@@ -251,13 +252,14 @@ def std_range_flag(
         else:
             # Create correlation matrix between different assets
             if False:
-                executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
-                with executor as ex:
-                    if ex is not None:
-                        flag = []
-                        for feat_type in feature_types:
-                            corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                            turbine_ids = np.array(corr_df.columns)
+                flag = []
+                for feat_type in feature_types:
+                    if corr_df is None:
+                        corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                    turbine_ids = np.array(corr_df.columns)
+                    executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
+                    with executor as ex:
+                        if ex is not None:
                             # Sort the correlated values according to the highest value, with nans at the end.
                             ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
                             # rows = turbine_id, columns = order of correlation from highest to lowest
@@ -270,7 +272,8 @@ def std_range_flag(
             else:
                 flag = []
                 for feat_type in feature_types:
-                    corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
+                    if corr_df is None:
+                        corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
                     turbine_ids = np.array(corr_df.columns)
                     # Sort the correlated values according to the highest value, with nans at the end.
                     ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
