@@ -255,17 +255,20 @@ def std_range_flag(
                 flag = []
                 for feat_type in feature_types:
                     if corr_df is None:
-                        corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                    turbine_ids = np.array(corr_df.columns)
+                        cdf = asset_correlation_matrix_pl(data_pl, feat_type)
+                    else:
+                        cdf = corr_df[feat_type]
+                    turbine_ids = np.array(cdf.columns)
+                    # Sort the correlated values according to the highest value, with nans at the end.
+                    ix_sort = (-cdf.to_numpy()).argsort(axis=1)
+                    # rows = turbine_id, columns = order of correlation from highest to lowest
+                    sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"), max_workers=int(os.environ.get("MAX_WORKERS", mp.cpu_count())))
                     with executor as ex:
                         if ex is not None:
-                            # Sort the correlated values according to the highest value, with nans at the end.
-                            ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
-                            # rows = turbine_id, columns = order of correlation from highest to lowest
-                            sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
+                            
                             for t, tid in enumerate(turbine_ids):
-                                flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df[feat_type], corr_df[feat_type], feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
+                                flag.append(ex.submit(_single_turbine_std_range_flag, data, sort_df, cdf, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk))
                         
                     flag = [f.result() for f in flag]
                         
@@ -273,14 +276,17 @@ def std_range_flag(
                 flag = []
                 for feat_type in feature_types:
                     if corr_df is None:
-                        corr_df = asset_correlation_matrix_pl(data_pl, feat_type)
-                    turbine_ids = np.array(corr_df.columns)
+                        cdf = asset_correlation_matrix_pl(data_pl, feat_type)
+                    else:
+                        cdf = corr_df[feat_type]
+
+                    turbine_ids = np.array(cdf.columns)
                     # Sort the correlated values according to the highest value, with nans at the end.
-                    ix_sort = (-corr_df.to_numpy()).argsort(axis=1)
+                    ix_sort = (-cdf.to_numpy()).argsort(axis=1)
                     # rows = turbine_id, columns = order of correlation from highest to lowest
                     sort_df = pd.DataFrame(turbine_ids[ix_sort], index=turbine_ids)
                     for t, tid in enumerate(turbine_ids):
-                        res = _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
+                        res = _single_turbine_std_range_flag(data, sort_df, cdf, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res)
                     
                     # logging.info(f"Started combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
@@ -295,7 +301,7 @@ def std_range_flag(
         logging.info(f"Started filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
         flag = flag.select(pl.all().fill_null(False).cast(bool))
         logging.info(f"Finished filling nulls and casting types for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-        return flag.lazy()
+        return flag
     else:
         raise TypeError("Either data_pl or data_pd must be passed.")
 
