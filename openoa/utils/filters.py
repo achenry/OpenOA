@@ -171,8 +171,10 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
     logging.info(f"Defining mean/stddev over correlated turbines for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     data = data.select(corr_features)\
                .with_columns(pl.mean_horizontal(corr_features).alias(f"mean_over_assets"), 
-                             (pl.concat_list(corr_features).list.std(ddof=1) * threshold).alias(f"std_over_assets"))\
-               .select(pl.col(f"{feat_type}_{tid}"), 
+                             (pl.concat_list(corr_features).list.std(ddof=1) * threshold).alias(f"std_over_assets"))
+    
+    logging.info(f"Defining lower/upper bounds for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
+    data = data.select(pl.col(f"{feat_type}_{tid}"), 
                        (pl.col("mean_over_assets") - pl.col("std_over_assets")).alias("lower_bound"), 
                        (pl.col("mean_over_assets") + pl.col("std_over_assets")).alias("upper_bound"))
     
