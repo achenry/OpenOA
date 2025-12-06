@@ -171,19 +171,19 @@ def _single_turbine_std_range_flag(data, sort_df, corr_df, feat_type, tid, t, r2
     logging.info(f"Defining mean/stddev over correlated turbines for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     data = data.select(corr_features)\
                .with_columns(pl.mean_horizontal(corr_features).alias(f"mean_over_assets"), 
-                             (pl.concat_list(corr_features).list.std(ddof=1) * threshold).alias(f"std_over_assets"))
+                             (pl.concat_list(corr_features).list.std(ddof=1) * threshold).alias(f"std_over_assets"))\
+               .select(pl.col(f"{feat_type}_{tid}"), 
+                       (pl.col("mean_over_assets") - pl.col("std_over_assets")).alias("lower_bound"), 
+                       (pl.col("mean_over_assets") + pl.col("std_over_assets")).alias("upper_bound"))
     
     logging.info(f"Returning stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
-    # df = data.select(corr_features)\
-    #             .select((pl.col(f"{feat_type}_{tid}").le(data_mean - data_std).alias("lower") \
-    #                     | pl.col(f"{feat_type}_{tid}").ge(data_mean + data_std).alias("upper")) \
-    #             .alias(f"{feat_type}_{tid}"))
-    return data.select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=pl.col("mean_over_assets") - pl.col("std_over_assets"), 
-                                                                 upper_bound=pl.col("mean_over_assets") + pl.col("std_over_assets"), closed="none") \
-                .alias(f"{feat_type}_{tid}"))
-    # logging.info(f"Finished computing stddev filter for chunk {chunk}, feature type {feat_type}, asset {tid}. Using RAM {virtual_memory().percent}%.")
     
-    # return df
+    # return data.select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=pl.col("mean_over_assets") - pl.col("std_over_assets"), 
+    #                                                              upper_bound=pl.col("mean_over_assets") + pl.col("std_over_assets"), closed="none") \
+    #             .alias(f"{feat_type}_{tid}"))
+    return data.select(~pl.col(f"{feat_type}_{tid}").is_between(lower_bound=pl.col("lower_bound"), 
+                                                                 upper_bound=pl.col("upper_bound"), closed="none") \
+                .alias(f"{feat_type}_{tid}"))
 
 def std_range_flag(
     data_pd: pd.DataFrame | pd.Series | None = None,
@@ -293,10 +293,6 @@ def std_range_flag(
                         res = _single_turbine_std_range_flag(data, sort_df, cdf, feat_type, tid, t, r2_threshold, threshold, min_correlated_assets, save_dir, chunk)
                         flag.append(res)
                     
-                    # logging.info(f"Started combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-                    # flag[-1] = pl.concat(pl.collect_all(flag[-len(turbine_ids)]), how="horizontal")
-                    # logging.info(f"Finished combining stddev flags for feature type {feat_type} and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
-            
             logging.info(f"Started combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
             flag = pl.concat(flag, how="horizontal")
             logging.info(f"Finished combining stddev flags for all feature types and assets for chunk {chunk}. Using RAM {virtual_memory().percent}%.")
