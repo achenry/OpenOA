@@ -12,6 +12,9 @@ import polars.selectors as cs
 from numpy.polynomial import Polynomial
 import re
 
+import logging 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 mpi_exists = False
 # try:
 #     from mpi4py import MPI
@@ -261,7 +264,7 @@ def impute_all_assets_by_correlation(
         return None
 
 def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
-    print(f"Imputing feature {impute_col} for asset {target_id}")
+    logging.info(f"Imputing feature {impute_col} for asset {target_id}")
     # If there are no NaN values, then skip the asset altogether, otherwise
     # keep track of the number we need to continue checking for
     ix_target = cs.ends_with(f"_{target_id}").alias(impute_col)
@@ -314,7 +317,7 @@ def impute_target_id_pl(data, corr_df, sort_df, r2_threshold, asset_id_col, impu
     return ix_target, sub_df.fill_nan(None)
 
 def impute_target_id_pd(data, corr_df, sort_df, r2_threshold, asset_id_col, impute_df, impute_col, reference_col, target_id, method, degree):
-    print(f"Imputing feature {impute_col} for asset {target_id}")
+    logging.info(f"Imputing feature {impute_col} for asset {target_id}")
     # If there are no NaN values, then skip the asset altogether, otherwise
     # keep track of the number we need to continue checking for
     ix_target = impute_df.index.get_level_values(1) == target_id
